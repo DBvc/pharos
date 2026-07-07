@@ -1,0 +1,4 @@
+(executable
+ (public_name pharosd)
+ (name main)
+ (libraries pharos_core dream yojson lwt))

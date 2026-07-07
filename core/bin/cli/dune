@@ -1,0 +1,4 @@
+(executable
+ (public_name pharos)
+ (name main)
+ (libraries pharos_core yojson))

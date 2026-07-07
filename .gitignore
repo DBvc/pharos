@@ -1,0 +1,26 @@
+# OCaml
+_build/
+*.install
+*.merlin
+.opam-switch/
+
+# Swift / Xcode
+.build/
+DerivedData/
+.swiftpm/
+*.xcuserdata/
+*.xcuserstate
+
+# Local data
+var/*.sqlite
+var/*.sqlite-*
+var/*.db
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# macOS
+.DS_Store

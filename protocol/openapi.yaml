@@ -1,0 +1,115 @@
+openapi: 3.1.0
+info:
+  title: Pharos Local API
+  version: 0.0.1
+servers:
+  - url: http://127.0.0.1:8765
+paths:
+  /health:
+    get:
+      operationId: health
+      responses:
+        '200':
+          description: OK
+  /v0/capture:
+    post:
+      operationId: capture
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptureRequest'
+      responses:
+        '200':
+          description: Created request
+  /v0/today:
+    get:
+      operationId: today
+      responses:
+        '200':
+          description: Today snapshot
+  /v0/requests/{id}:
+    get:
+      operationId: getRequest
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Request detail
+  /v0/actions/{id}/approve:
+    post:
+      operationId: approveAction
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Approval created
+  /v0/actions/{id}/edit-and-approve:
+    post:
+      operationId: editAndApproveAction
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body:
+                  type: string
+      responses:
+        '200':
+          description: Edited approval created
+  /v0/actions/{id}/reject:
+    post:
+      operationId: rejectAction
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Rejected
+  /v0/actions/{id}/execute-local:
+    post:
+      operationId: executeLocalAction
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Executed local action
+components:
+  schemas:
+    CaptureRequest:
+      type: object
+      required: [body]
+      properties:
+        title:
+          type: string
+        body:
+          type: string
+        url:
+          type: string
+        actor:
+          type: string

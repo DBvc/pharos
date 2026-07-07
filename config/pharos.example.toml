@@ -1,0 +1,30 @@
+[core]
+db_path = "var/pharos.dev.sqlite"
+host = "127.0.0.1"
+port = 8765
+
+[policy]
+default_external_write_requires_review = true
+allow_l4_execution = false
+allow_l5_execution = false
+
+[sources.gitlab]
+enabled = false
+base_url = "https://gitlab.example.internal"
+read_enabled = true
+write_enabled = false
+
+[sources.feishu_chat]
+enabled = false
+read_enabled = true
+write_enabled = false
+
+[sources.feishu_project]
+enabled = false
+read_enabled = true
+write_enabled = false
+
+[sources.feishu_docs]
+enabled = false
+read_enabled = true
+write_enabled = false

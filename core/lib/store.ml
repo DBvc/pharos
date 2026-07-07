@@ -1,0 +1,372 @@
+open Domain
+
+module S = Sqlite3
+
+type t = { db : S.db }
+
+let ensure_parent_dir path =
+  match Filename.dirname path with
+  | "." | "" -> ()
+  | dir -> if not (Sys.file_exists dir) then Unix.mkdir dir 0o755
+
+let connect path =
+  ensure_parent_dir path;
+  let db = S.db_open path in
+  Migrations.run db;
+  { db }
+
+let close t = ignore (S.db_close t.db)
+
+let fail_sql msg rc = failwith (Printf.sprintf "%s: %s" msg (S.Rc.to_string rc))
+
+let exec t sql =
+  match S.exec t.db sql with
+  | S.Rc.OK -> ()
+  | rc -> fail_sql "SQLite exec failed" rc
+
+let bind stmt idx data =
+  match S.bind stmt idx data with
+  | S.Rc.OK -> ()
+  | rc -> fail_sql "SQLite bind failed" rc
+
+let bind_text stmt idx value = bind stmt idx (S.Data.TEXT value)
+let bind_opt_text stmt idx = function
+  | None -> bind stmt idx S.Data.NULL
+  | Some value -> bind_text stmt idx value
+let bind_int stmt idx value = bind stmt idx (S.Data.INT (Int64.of_int value))
+let bool_int b = if b then 1 else 0
+
+let finalize stmt = ignore (S.finalize stmt)
+
+let with_stmt t sql f =
+  let stmt = S.prepare t.db sql in
+  Fun.protect ~finally:(fun () -> finalize stmt) (fun () -> f stmt)
+
+let step_done stmt =
+  match S.step stmt with
+  | S.Rc.DONE -> ()
+  | rc -> fail_sql "SQLite step expected DONE" rc
+
+let text_col stmt i =
+  match S.column stmt i with
+  | S.Data.TEXT s -> s
+  | S.Data.NULL -> ""
+  | data -> S.Data.to_string data
+
+let opt_text_col stmt i =
+  match S.column stmt i with
+  | S.Data.NULL -> None
+  | S.Data.TEXT s when s = "" -> None
+  | S.Data.TEXT s -> Some s
+  | data -> Some (S.Data.to_string data)
+
+let int_col stmt i =
+  match S.column stmt i with
+  | S.Data.INT n -> Int64.to_int n
+  | S.Data.FLOAT f -> int_of_float f
+  | S.Data.TEXT s -> int_of_string_opt s |> Option.value ~default:0
+  | _ -> 0
+
+let insert_source_signal t s =
+  with_stmt t {|
+    INSERT INTO source_signals
+    (id, kind, external_id, actor, title, body, url, occurred_at, raw_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  |} (fun stmt ->
+    bind_text stmt 1 s.id;
+    bind_text stmt 2 (source_kind_to_string s.kind);
+    bind_opt_text stmt 3 s.external_id;
+    bind_text stmt 4 s.actor;
+    bind_text stmt 5 s.title;
+    bind_text stmt 6 s.body;
+    bind_opt_text stmt 7 s.url;
+    bind_text stmt 8 s.occurred_at;
+    bind_opt_text stmt 9 s.raw_json;
+    step_done stmt)
+
+let insert_work_request t r =
+  with_stmt t {|
+    INSERT INTO work_requests
+    (id, title, summary, status, priority, risk, source_kind, source_signal_id, reason, next_step, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  |} (fun stmt ->
+    bind_text stmt 1 r.id;
+    bind_text stmt 2 r.title;
+    bind_text stmt 3 r.summary;
+    bind_text stmt 4 (request_status_to_string r.status);
+    bind_text stmt 5 (priority_to_string r.priority);
+    bind_text stmt 6 (risk_to_string r.risk);
+    bind_text stmt 7 (source_kind_to_string r.source_kind);
+    bind_text stmt 8 r.source_signal_id;
+    bind_text stmt 9 r.reason;
+    bind_text stmt 10 r.next_step;
+    bind_text stmt 11 r.created_at;
+    bind_text stmt 12 r.updated_at;
+    step_done stmt)
+
+let insert_action t a =
+  with_stmt t {|
+    INSERT INTO proposed_actions
+    (id, request_id, title, body, target_kind, target_ref, risk, requires_approval, status, payload_hash, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  |} (fun stmt ->
+    bind_text stmt 1 a.id;
+    bind_text stmt 2 a.request_id;
+    bind_text stmt 3 a.title;
+    bind_text stmt 4 a.body;
+    bind_text stmt 5 a.target_kind;
+    bind_text stmt 6 a.target_ref;
+    bind_text stmt 7 (risk_to_string a.risk);
+    bind_int stmt 8 (bool_int a.requires_approval);
+    bind_text stmt 9 (action_status_to_string a.status);
+    bind_text stmt 10 a.payload_hash;
+    bind_text stmt 11 a.created_at;
+    bind_text stmt 12 a.updated_at;
+    step_done stmt)
+
+let insert_approval t a =
+  with_stmt t {|
+    INSERT INTO approvals
+    (id, action_id, action_hash, decision, approved_body, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  |} (fun stmt ->
+    bind_text stmt 1 a.id;
+    bind_text stmt 2 a.action_id;
+    bind_text stmt 3 a.action_hash;
+    bind_text stmt 4 (approval_decision_to_string a.decision);
+    bind_opt_text stmt 5 a.approved_body;
+    bind_text stmt 6 a.created_at;
+    step_done stmt)
+
+let insert_evidence t e =
+  with_stmt t {|
+    INSERT INTO evidence_items
+    (id, request_id, kind, title, body, url, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  |} (fun stmt ->
+    bind_text stmt 1 e.id;
+    bind_text stmt 2 e.request_id;
+    bind_text stmt 3 e.kind;
+    bind_text stmt 4 e.title;
+    bind_text stmt 5 e.body;
+    bind_opt_text stmt 6 e.url;
+    bind_text stmt 7 e.created_at;
+    step_done stmt)
+
+let insert_timeline t e =
+  with_stmt t {|
+    INSERT INTO timeline_events
+    (id, request_id, kind, title, body, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  |} (fun stmt ->
+    bind_text stmt 1 e.id;
+    bind_text stmt 2 e.request_id;
+    bind_text stmt 3 e.kind;
+    bind_text stmt 4 e.title;
+    bind_text stmt 5 e.body;
+    bind_text stmt 6 e.created_at;
+    step_done stmt)
+
+let update_request_status t ~request_id ~status =
+  with_stmt t "UPDATE work_requests SET status = ?, updated_at = ? WHERE id = ?" (fun stmt ->
+    bind_text stmt 1 (request_status_to_string status);
+    bind_text stmt 2 (Time.now_iso ());
+    bind_text stmt 3 request_id;
+    step_done stmt)
+
+let update_action_status t ~action_id ~status =
+  with_stmt t "UPDATE proposed_actions SET status = ?, updated_at = ? WHERE id = ?" (fun stmt ->
+    bind_text stmt 1 (action_status_to_string status);
+    bind_text stmt 2 (Time.now_iso ());
+    bind_text stmt 3 action_id;
+    step_done stmt)
+
+let update_action_body_status_hash t ~action_id ~body ~payload_hash ~status =
+  with_stmt t "UPDATE proposed_actions SET body = ?, payload_hash = ?, status = ?, updated_at = ? WHERE id = ?" (fun stmt ->
+    bind_text stmt 1 body;
+    bind_text stmt 2 payload_hash;
+    bind_text stmt 3 (action_status_to_string status);
+    bind_text stmt 4 (Time.now_iso ());
+    bind_text stmt 5 action_id;
+    step_done stmt)
+
+let row_to_work_request stmt =
+  {
+    id = text_col stmt 0;
+    title = text_col stmt 1;
+    summary = text_col stmt 2;
+    status = request_status_of_string (text_col stmt 3);
+    priority = priority_of_string (text_col stmt 4);
+    risk = risk_of_string (text_col stmt 5);
+    source_kind = source_kind_of_string (text_col stmt 6);
+    source_signal_id = text_col stmt 7;
+    reason = text_col stmt 8;
+    next_step = text_col stmt 9;
+    created_at = text_col stmt 10;
+    updated_at = text_col stmt 11;
+  }
+
+let row_to_action stmt =
+  {
+    id = text_col stmt 0;
+    request_id = text_col stmt 1;
+    title = text_col stmt 2;
+    body = text_col stmt 3;
+    target_kind = text_col stmt 4;
+    target_ref = text_col stmt 5;
+    risk = risk_of_string (text_col stmt 6);
+    requires_approval = int_col stmt 7 <> 0;
+    status = action_status_of_string (text_col stmt 8);
+    payload_hash = text_col stmt 9;
+    created_at = text_col stmt 10;
+    updated_at = text_col stmt 11;
+  }
+
+let row_to_approval stmt =
+  {
+    id = text_col stmt 0;
+    action_id = text_col stmt 1;
+    action_hash = text_col stmt 2;
+    decision = approval_decision_of_string (text_col stmt 3);
+    approved_body = opt_text_col stmt 4;
+    created_at = text_col stmt 5;
+  }
+
+let row_to_evidence stmt =
+  {
+    id = text_col stmt 0;
+    request_id = text_col stmt 1;
+    kind = text_col stmt 2;
+    title = text_col stmt 3;
+    body = text_col stmt 4;
+    url = opt_text_col stmt 5;
+    created_at = text_col stmt 6;
+  }
+
+let row_to_timeline stmt =
+  {
+    id = text_col stmt 0;
+    request_id = text_col stmt 1;
+    kind = text_col stmt 2;
+    title = text_col stmt 3;
+    body = text_col stmt 4;
+    created_at = text_col stmt 5;
+  }
+
+let collect_rows stmt decode =
+  let rec loop acc =
+    match S.step stmt with
+    | S.Rc.ROW -> loop (decode stmt :: acc)
+    | S.Rc.DONE -> List.rev acc
+    | rc -> fail_sql "SQLite step expected ROW or DONE" rc
+  in
+  loop []
+
+let list_work_requests t =
+  with_stmt t {|
+    SELECT id, title, summary, status, priority, risk, source_kind, source_signal_id, reason, next_step, created_at, updated_at
+    FROM work_requests
+    ORDER BY updated_at DESC
+  |} (fun stmt -> collect_rows stmt row_to_work_request)
+
+let get_work_request t id =
+  with_stmt t {|
+    SELECT id, title, summary, status, priority, risk, source_kind, source_signal_id, reason, next_step, created_at, updated_at
+    FROM work_requests
+    WHERE id = ?
+  |} (fun stmt ->
+    bind_text stmt 1 id;
+    match S.step stmt with
+    | S.Rc.ROW -> Some (row_to_work_request stmt)
+    | S.Rc.DONE -> None
+    | rc -> fail_sql "SQLite get_work_request failed" rc)
+
+let get_action t id =
+  with_stmt t {|
+    SELECT id, request_id, title, body, target_kind, target_ref, risk, requires_approval, status, payload_hash, created_at, updated_at
+    FROM proposed_actions
+    WHERE id = ?
+  |} (fun stmt ->
+    bind_text stmt 1 id;
+    match S.step stmt with
+    | S.Rc.ROW -> Some (row_to_action stmt)
+    | S.Rc.DONE -> None
+    | rc -> fail_sql "SQLite get_action failed" rc)
+
+let list_actions_by_request t request_id =
+  with_stmt t {|
+    SELECT id, request_id, title, body, target_kind, target_ref, risk, requires_approval, status, payload_hash, created_at, updated_at
+    FROM proposed_actions
+    WHERE request_id = ?
+    ORDER BY created_at ASC
+  |} (fun stmt ->
+    bind_text stmt 1 request_id;
+    collect_rows stmt row_to_action)
+
+let list_evidence_by_request t request_id =
+  with_stmt t {|
+    SELECT id, request_id, kind, title, body, url, created_at
+    FROM evidence_items
+    WHERE request_id = ?
+    ORDER BY created_at ASC
+  |} (fun stmt ->
+    bind_text stmt 1 request_id;
+    collect_rows stmt row_to_evidence)
+
+let list_timeline_by_request t request_id =
+  with_stmt t {|
+    SELECT id, request_id, kind, title, body, created_at
+    FROM timeline_events
+    WHERE request_id = ?
+    ORDER BY created_at ASC
+  |} (fun stmt ->
+    bind_text stmt 1 request_id;
+    collect_rows stmt row_to_timeline)
+
+let get_latest_approval_for_action t action_id =
+  with_stmt t {|
+    SELECT id, action_id, action_hash, decision, approved_body, created_at
+    FROM approvals
+    WHERE action_id = ? AND decision IN ('approved', 'edited_and_approved')
+    ORDER BY created_at DESC
+    LIMIT 1
+  |} (fun stmt ->
+    bind_text stmt 1 action_id;
+    match S.step stmt with
+    | S.Rc.ROW -> Some (row_to_approval stmt)
+    | S.Rc.DONE -> None
+    | rc -> fail_sql "SQLite get_latest_approval_for_action failed" rc)
+
+let request_detail t request_id =
+  match get_work_request t request_id with
+  | None -> None
+  | Some request ->
+      Some {
+        request;
+        actions = list_actions_by_request t request_id;
+        evidence = list_evidence_by_request t request_id;
+        timeline = list_timeline_by_request t request_id;
+      }
+
+let today t =
+  let all = list_work_requests t in
+  let pick status = List.filter (fun r -> r.status = status) all in
+  let archived_noise_count = List.length (pick Archived) in
+  {
+    needs_review = pick ReadyForReview;
+    running = pick Running;
+    needs_context = pick NeedsContext;
+    new_items = List.filter (fun r -> r.status = New || r.status = Triaging) all;
+    done_today = pick Done;
+    archived_noise_count;
+  }
+
+let bump_metric t column =
+  let day = Time.today_utc () in
+  let sql = Printf.sprintf {|
+    INSERT INTO metrics_daily(day, %s) VALUES(?, 1)
+    ON CONFLICT(day) DO UPDATE SET %s = %s + 1
+  |} column column column in
+  with_stmt t sql (fun stmt ->
+    bind_text stmt 1 day;
+    step_done stmt)

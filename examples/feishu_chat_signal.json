@@ -1,0 +1,13 @@
+{
+  "source_kind": "feishu_chat",
+  "external_id": "chat/oc_abc/thread/msg_123",
+  "actor": "bob",
+  "title": "Bob asked about rollout timing",
+  "body": "@you 这个重试逻辑今天能确认上线窗口吗？",
+  "url": "https://feishu.example/messages/msg_123",
+  "occurred_at": "2026-07-07T10:05:00Z",
+  "raw": {
+    "chat_id": "oc_abc",
+    "message_id": "msg_123"
+  }
+}

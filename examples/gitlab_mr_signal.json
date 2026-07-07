@@ -1,0 +1,15 @@
+{
+  "source_kind": "gitlab",
+  "external_id": "group/project!456#review-request",
+  "actor": "alice",
+  "title": "Review requested: billing retry logic",
+  "body": "Alice requested your review on MR !456. Pipeline is failing in retry policy tests.",
+  "url": "https://gitlab.example/group/project/-/merge_requests/456",
+  "occurred_at": "2026-07-07T09:30:00Z",
+  "raw": {
+    "object_kind": "merge_request",
+    "project_id": 123,
+    "iid": 456,
+    "pipeline_status": "failed"
+  }
+}

@@ -1,0 +1,3 @@
+(test
+ (name policy_smoke)
+ (libraries pharos_core yojson))
