@@ -24,3 +24,6 @@ var/*.db
 
 # macOS
 .DS_Store
+
+# plan first
+.plan-first/*
