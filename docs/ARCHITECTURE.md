@@ -22,6 +22,47 @@ SQLite + file store + Keychain-owned secrets
 6. Every reviewable action must have evidence and a timeline.
 7. Approval is bound to an action payload hash.
 
+## Concept boundary
+
+Pharos has two related models, and this concept boundary is a product and architecture contract.
+
+### User-facing model
+
+The user-facing model is the product surface:
+
+```text
+watch signals -> gather evidence -> prepare a next move -> ask for approval -> execute with an audit trail
+```
+
+Today and Request Detail should speak in attention and decision terms:
+
+- Needs Decision.
+- Needs Input.
+- Watching.
+- Handled.
+- Noise.
+- Evidence used.
+- Prepared next move.
+- Approval target and result.
+
+The SwiftUI app can show internal status as secondary metadata when useful, but the main UI does not need to expose audit and storage concepts such as `payload_hash`, `SourceSignal`, raw adapter payloads, policy internals, or database table names.
+
+### Core internal model
+
+The core internal model is the audit and safety substrate:
+
+| User-facing concept | Core internal model |
+|---|---|
+| Signal Pharos watched | `SourceSignal` |
+| Decision card | `WorkRequest` plus review state |
+| Prepared next move | `ProposedAction` |
+| User approval or rejection | approval records and action status |
+| Evidence used | evidence items and context bundle |
+| Execution record | timeline events |
+| Ask before acting | policy gate plus approval `payload_hash` check |
+
+The OCaml core owns domain entities, state transitions, risk policy, approval binding, evidence, timeline, and writeback authorization. UI, adapters, and skills may present, submit, or propose data, but they do not become the source of truth for domain state or policy decisions.
+
 ## Runtime components
 
 ### 1. SwiftUI macOS app
