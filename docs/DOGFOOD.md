@@ -4,6 +4,8 @@
 
 Determine whether Pharos reduces context switching and missed work without creating a new babysitting chore.
 
+Dogfood should test the user experience in `docs/USER_EXPERIENCE.md`: Today is a decision cockpit, not a new inbox. The main question is whether Pharos creates fewer, clearer user decisions instead of another place to manage statuses.
+
 ## Before MVP dogfood
 
 For 3 workdays, manually record:
@@ -29,6 +31,7 @@ Date:
 Did Pharos reduce system-scanning or context-hunting? 0-5
 Did Pharos help avoid missed work? 0-5
 Did Pharos create extra burden? 0-5
+Did Needs Decision contain clear decisions rather than status noise? 0-5
 Most valuable request today:
 Most annoying or useless request today:
 One thing to improve tomorrow:
@@ -40,8 +43,10 @@ Track locally:
 
 - Source signals.
 - Work requests.
-- Today entries.
-- Ready for Review entries.
+- Today entries by user-facing group.
+- Needs Decision entries.
+- Needs Input entries.
+- Ready for Review entries as the internal state behind reviewable decisions.
 - Auto-advanced requests.
 - Approvals.
 - Edit approvals.
@@ -63,6 +68,7 @@ Continue investing if:
 4. Week 2 junk ratio <= 20%.
 5. Blocked or successful unapproved external writes do not occur in normal flow.
 6. Subjective reduction in context switching averages >= 4/5.
+7. Needs Decision clarity averages >= 4/5 without increasing babysitting.
 
 ## Scope reduction criteria
 

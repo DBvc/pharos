@@ -4,6 +4,8 @@
 
 Goal: prove the unified workflow without external sources.
 
+UX contract: `docs/USER_EXPERIENCE.md` defines Today as a decision cockpit, not a new inbox. M0 should make a reviewable manual request appear as Needs Decision, while keeping `Ready for Review` as the internal state that powers it.
+
 ### Scope
 
 - SwiftUI macOS shell.
@@ -30,7 +32,7 @@ Included in this repo:
 
 ### Done criteria
 
-- Manual capture is visible in Today within 3 seconds.
+- Manual capture is visible in Today within 3 seconds, using the user-facing decision cockpit grouping.
 - The app shows request summary, reason, evidence, timeline, and proposed action.
 - Approve executes the local action and marks the request done.
 - Edit and approve executes the edited body.
@@ -70,6 +72,8 @@ GitLab MR has clearer shape and is useful for validating evidence, timeline, and
 
 Goal: Pharos becomes a working cockpit rather than a passive inbox.
 
+Today grouping must remain user-facing: Needs Decision, Needs Input, Watching, Handled, and Noise. Do not reintroduce Needs Review, Running, Needs Context, or Done Today as default top-level Today sections; those labels can remain internal states, filters, or metrics when useful.
+
 ### Scope
 
 - Request identity and merge logic.
@@ -92,7 +96,7 @@ Goal: Pharos becomes a working cockpit rather than a passive inbox.
 ### Done criteria
 
 - At least 3 request types automatically reach summary, draft, or suggested action stage.
-- Ready for Review requests contain enough evidence for most decisions.
+- Needs Decision cards backed by Ready for Review contain enough evidence for most user decisions.
 - Skill failures are visible and retryable.
 - User can request more context and trigger a new run.
 

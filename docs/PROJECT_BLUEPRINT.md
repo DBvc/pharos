@@ -4,7 +4,13 @@ This blueprint turns the product PRD into an implementation-shaped starter plan.
 
 ## Product goal
 
-Pharos collects work signals, turns useful signals into work requests, gathers enough context, runs safe automation, pauses at Review Gate, then continues only after approval.
+Pharos watches work systems, turns useful signals into prepared decisions, gathers enough context, runs safe automation, pauses at Review Gate, then continues only after approval.
+
+`docs/USER_EXPERIENCE.md` is the source of truth for the user-facing mental model. Implementation docs should preserve this split:
+
+- User-facing surface: decision cockpit grouped by attention and user decision pressure.
+- Core surface: `SourceSignal`, `WorkRequest`, `ProposedAction`, evidence, timeline, risk, approval, and payload hashes.
+- Today must not become a new inbox or a plain internal status board.
 
 ## Implementation goal for this starter
 
@@ -93,7 +99,7 @@ RootView
   Sidebar and page routing.
 
 TodayView
-  Main queue grouped by status.
+  Decision cockpit grouped by Needs Decision, Needs Input, Watching, Handled, and Noise.
 
 RequestDetailView
   Header, summary, actions, evidence, timeline, Review Gate controls.
@@ -127,7 +133,7 @@ POST /v0/capture
   → Store.insert_evidence
   → Store.insert_action
   → Store.insert_timeline x3
-  → Today shows Ready for Review
+  → Today shows a Needs Decision card backed by Ready for Review internally
 ```
 
 Review path:
