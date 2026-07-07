@@ -1,8 +1,22 @@
 # Pharos Starter
 
-Local-first AI work cockpit for collecting work signals, running safe automation, and pausing for human review.
+Pharos watches your work systems, prepares the next move, and asks before it acts.
 
-This repository is an initial scaffold for the Pharos MVP. It is designed to be a practical starting point for Codex-driven iteration, not a fully finished app. The first slice keeps the safety architecture visible from day one: every request, action, approval, evidence item, and timeline event is represented in the core model.
+```text
+Pharos 帮你看住工作系统，整理证据、准备下一步；真正行动前一定问你。
+```
+
+Pharos is a local-first AI work cockpit. It should not become another inbox. Its job is to turn scattered Feishu, GitLab, document, and manual signals into a small number of prepared decisions: approve, edit, reject, ask for more context, or archive as noise.
+
+This repository is an initial scaffold for the Pharos MVP, not a fully finished app. The starter proves the safety loop in miniature: manual capture becomes a local request with evidence, a proposed action, review controls, policy-checked execution, and timeline records.
+
+## Product mental model
+
+```text
+watch signals -> gather evidence -> prepare a next move -> ask for approval -> execute with an audit trail
+```
+
+In the user-facing product, Today should answer one question: what needs my attention now? Internally, the core can keep precise request, action, approval, evidence, risk, and hash records. That split is intentional: the user sees a decision cockpit, while the core preserves the audit trail and writeback safety.
 
 ## What is included
 
@@ -77,6 +91,7 @@ Pharos should feel like a tower cockpit, not a runaway sprinkler system. The cor
 
 ## Important documents
 
+- [User experience](docs/USER_EXPERIENCE.md)
 - [PRD v0.2](docs/PRD_v0.2.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Iteration plan](docs/ITERATION_PLAN.md)
