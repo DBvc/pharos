@@ -74,7 +74,8 @@ let routes store =
   Dream.router [
     Dream.get "/health" (fun _ -> json (`Assoc [ ("ok", `Bool true); ("service", `String "pharosd") ]));
     Dream.post "/v0/capture" (capture store);
-    Dream.get "/v0/today" (fun _ -> json (Domain.today_snapshot_to_yojson (Runner.today store)));
+    Dream.get "/v0/today" (fun _ -> json (Domain.today_decision_snapshot_to_yojson (Runner.today store)));
+    Dream.get "/v0/debug/today-internal" (fun _ -> json (Domain.today_snapshot_to_yojson (Runner.today_internal store)));
     Dream.get "/v0/requests/:id" (get_request store);
     Dream.post "/v0/actions/:id/approve" (approve store);
     Dream.post "/v0/actions/:id/edit-and-approve" (edit_and_approve store);

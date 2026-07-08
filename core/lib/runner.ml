@@ -96,7 +96,8 @@ let capture_manual store input =
   request
 
 let get_detail = Store.request_detail
-let today = Store.today
+let today = Store.today_decision
+let today_internal = Store.today_internal
 let approve = Policy.approve
 let reject = Policy.reject
 let execute_local = Policy.execute_local

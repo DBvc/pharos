@@ -120,6 +120,35 @@ type today_snapshot = {
   archived_noise_count : int;
 }
 
+type attention_group = NeedsDecision | NeedsInput | Watching | Handled | Noise
+
+type decision_card = {
+  request_id : string;
+  title : string;
+  summary : string;
+  group : attention_group;
+  source_kind : source_kind;
+  source_url : string option;
+  priority : priority;
+  risk : risk;
+  why_now : string;
+  prepared_next_move : string option;
+  target_preview : string option;
+  evidence_count : int;
+  updated_at : string;
+  debug_status : request_status;
+}
+
+type noise_summary = { count : int }
+
+type today_decision_snapshot = {
+  needs_decision : decision_card list;
+  needs_input : decision_card list;
+  watching : decision_card list;
+  handled : decision_card list;
+  noise : noise_summary;
+}
+
 let source_kind_to_string = function
   | Manual -> "manual"
   | FeishuChat -> "feishu_chat"
@@ -231,6 +260,21 @@ let risk_is_executable_in_mvp = function
   | L0 | L1 | L2 | L3 -> true
   | L4 | L5 -> false
 
+let attention_group_to_string = function
+  | NeedsDecision -> "needs_decision"
+  | NeedsInput -> "needs_input"
+  | Watching -> "watching"
+  | Handled -> "handled"
+  | Noise -> "noise"
+
+let attention_group_of_status = function
+  | ReadyForReview -> NeedsDecision
+  | NeedsContext | Failed -> NeedsInput
+  | New | Triaging | Running | Waiting | Approved | Executing | Snoozed ->
+      Watching
+  | Done -> Handled
+  | Archived -> Noise
+
 let payload_hash ~target_kind ~target_ref ~risk ~body =
   Digest.to_hex (Digest.string (String.concat "\n" [ target_kind; target_ref; risk_to_string risk; body ]))
 
@@ -327,3 +371,35 @@ let today_snapshot_to_yojson (t : today_snapshot) =
     Json_util.list "done_today" work_request_to_yojson t.done_today;
     Json_util.int "archived_noise_count" t.archived_noise_count;
   ]
+
+let decision_card_to_yojson (c : decision_card) =
+  Json_util.assoc
+    [
+      Json_util.str "request_id" c.request_id;
+      Json_util.str "title" c.title;
+      Json_util.str "summary" c.summary;
+      Json_util.str "group" (attention_group_to_string c.group);
+      Json_util.str "source_kind" (source_kind_to_string c.source_kind);
+      Json_util.opt_str "source_url" c.source_url;
+      Json_util.str "priority" (priority_to_string c.priority);
+      Json_util.str "risk" (risk_to_string c.risk);
+      Json_util.str "why_now" c.why_now;
+      Json_util.opt_str "prepared_next_move" c.prepared_next_move;
+      Json_util.opt_str "target_preview" c.target_preview;
+      Json_util.int "evidence_count" c.evidence_count;
+      Json_util.str "updated_at" c.updated_at;
+      Json_util.str "debug_status" (request_status_to_string c.debug_status);
+    ]
+
+let noise_summary_to_yojson (n : noise_summary) =
+  Json_util.assoc [ Json_util.int "count" n.count ]
+
+let today_decision_snapshot_to_yojson (t : today_decision_snapshot) =
+  Json_util.assoc
+    [
+      Json_util.list "needs_decision" decision_card_to_yojson t.needs_decision;
+      Json_util.list "needs_input" decision_card_to_yojson t.needs_input;
+      Json_util.list "watching" decision_card_to_yojson t.watching;
+      Json_util.list "handled" decision_card_to_yojson t.handled;
+      ("noise", noise_summary_to_yojson t.noise);
+    ]

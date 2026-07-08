@@ -9,6 +9,7 @@ let usage () =
   prerr_endline "Usage:";
   prerr_endline "  pharos capture <body> [--title <title>] [--url <url>]";
   prerr_endline "  pharos today";
+  prerr_endline "  pharos today-internal";
   prerr_endline "  pharos detail <request-id>";
   prerr_endline "  pharos approve <action-id>";
   prerr_endline "  pharos execute-local <action-id>";
@@ -38,7 +39,9 @@ let () =
         let request = Runner.capture_manual store { Runner.title = title; body; url; actor = Some "cli" } in
         print_json (Domain.work_request_to_yojson request))
   | [ "today" ] ->
-      with_store (fun store -> print_json (Domain.today_snapshot_to_yojson (Runner.today store)))
+      with_store (fun store -> print_json (Domain.today_decision_snapshot_to_yojson (Runner.today store)))
+  | [ "today-internal" ] ->
+      with_store (fun store -> print_json (Domain.today_snapshot_to_yojson (Runner.today_internal store)))
   | [ "detail"; id ] ->
       with_store (fun store ->
         match Runner.get_detail store id with

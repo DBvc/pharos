@@ -1,3 +1,7 @@
 (test
  (name policy_smoke)
  (libraries pharos_core yojson))
+
+(test
+ (name today_decision)
+ (libraries pharos_core yojson))

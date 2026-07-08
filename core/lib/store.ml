@@ -206,6 +206,19 @@ let row_to_work_request stmt : work_request =
     updated_at = text_col stmt 11;
   }
 
+let row_to_source_signal stmt : source_signal =
+  {
+    id = text_col stmt 0;
+    kind = source_kind_of_string (text_col stmt 1);
+    external_id = opt_text_col stmt 2;
+    actor = text_col stmt 3;
+    title = text_col stmt 4;
+    body = text_col stmt 5;
+    url = opt_text_col stmt 6;
+    occurred_at = text_col stmt 7;
+    raw_json = opt_text_col stmt 8;
+  }
+
 let row_to_action stmt : proposed_action =
   {
     id = text_col stmt 0;
@@ -262,6 +275,18 @@ let collect_rows stmt decode =
   in
   loop []
 
+let get_source_signal t id =
+  with_stmt t {|
+    SELECT id, kind, external_id, actor, title, body, url, occurred_at, raw_json
+    FROM source_signals
+    WHERE id = ?
+  |} (fun stmt ->
+    bind_text stmt 1 id;
+    match S.step stmt with
+    | S.Rc.ROW -> Some (row_to_source_signal stmt)
+    | S.Rc.DONE -> None
+    | rc -> fail_sql "SQLite get_source_signal failed" rc)
+
 let list_work_requests t =
   with_stmt t {|
     SELECT id, title, summary, status, priority, risk, source_kind, source_signal_id, reason, next_step, created_at, updated_at
@@ -302,6 +327,37 @@ let list_actions_by_request t request_id =
   |} (fun stmt ->
     bind_text stmt 1 request_id;
     collect_rows stmt row_to_action)
+
+let count_evidence_by_request t request_id =
+  with_stmt t "SELECT COUNT(*) FROM evidence_items WHERE request_id = ?" (fun stmt ->
+    bind_text stmt 1 request_id;
+    match S.step stmt with
+    | S.Rc.ROW -> int_col stmt 0
+    | S.Rc.DONE -> 0
+    | rc -> fail_sql "SQLite count_evidence_by_request failed" rc)
+
+let latest_action_by_request t request_id =
+  with_stmt t {|
+    SELECT id, request_id, title, body, target_kind, target_ref, risk, requires_approval, status, payload_hash, created_at, updated_at
+    FROM proposed_actions
+    WHERE request_id = ?
+    ORDER BY updated_at DESC, created_at DESC
+    LIMIT 1
+  |} (fun stmt ->
+    bind_text stmt 1 request_id;
+    match S.step stmt with
+    | S.Rc.ROW -> Some (row_to_action stmt)
+    | S.Rc.DONE -> None
+    | rc -> fail_sql "SQLite latest_action_by_request failed" rc)
+
+let has_reviewable_action t request_id =
+  with_stmt t "SELECT 1 FROM proposed_actions WHERE request_id = ? AND status = ? LIMIT 1" (fun stmt ->
+    bind_text stmt 1 request_id;
+    bind_text stmt 2 (action_status_to_string ActionProposed);
+    match S.step stmt with
+    | S.Rc.ROW -> true
+    | S.Rc.DONE -> false
+    | rc -> fail_sql "SQLite has_reviewable_action failed" rc)
 
 let list_evidence_by_request t request_id =
   with_stmt t {|
@@ -359,6 +415,75 @@ let today t =
     new_items = List.filter (fun (r : work_request) -> r.status = New || r.status = Triaging) all;
     done_today = pick Done;
     archived_noise_count;
+  }
+
+let today_internal = today
+
+let priority_rank = function
+  | Urgent -> 0
+  | High -> 1
+  | Normal -> 2
+  | Low -> 3
+
+let compare_decision_cards a b =
+  match compare (priority_rank a.priority) (priority_rank b.priority) with
+  | 0 -> String.compare b.updated_at a.updated_at
+  | n -> n
+
+let group_for_request t (request : work_request) =
+  match request.status with
+  | ReadyForReview ->
+      if has_reviewable_action t request.id then NeedsDecision else NeedsInput
+  | _ -> attention_group_of_status request.status
+
+let option_of_non_empty value =
+  let trimmed = String.trim value in
+  if trimmed = "" then None else Some value
+
+let target_preview (action : proposed_action) =
+  action.target_kind ^ " / " ^ action.target_ref
+
+let decision_card_for_request t (request : work_request) =
+  let source_url =
+    match get_source_signal t request.source_signal_id with
+    | None -> None
+    | Some signal -> signal.url
+  in
+  let latest_action = latest_action_by_request t request.id in
+  {
+    request_id = request.id;
+    title = request.title;
+    summary = request.summary;
+    group = group_for_request t request;
+    source_kind = request.source_kind;
+    source_url;
+    priority = request.priority;
+    risk = request.risk;
+    why_now = request.reason;
+    prepared_next_move =
+      (match latest_action with
+      | Some action -> Some action.title
+      | None -> option_of_non_empty request.next_step);
+    target_preview = Option.map target_preview latest_action;
+    evidence_count = count_evidence_by_request t request.id;
+    updated_at = request.updated_at;
+    debug_status = request.status;
+  }
+
+let today_decision t =
+  let all = list_work_requests t in
+  let cards = List.map (decision_card_for_request t) all in
+  let pick group =
+    cards
+    |> List.filter (fun (card : decision_card) -> card.group = group)
+    |> List.sort compare_decision_cards
+  in
+  {
+    needs_decision = pick NeedsDecision;
+    needs_input = pick NeedsInput;
+    watching = pick Watching;
+    handled = pick Handled;
+    noise = { count = List.length (pick Noise) };
   }
 
 let bump_metric t column =
