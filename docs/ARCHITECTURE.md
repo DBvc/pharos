@@ -198,13 +198,16 @@ P0 local API:
 ```text
 GET  /health
 POST /v0/capture
-GET  /v0/today
+GET  /v0/today -> TodaySnapshot with DecisionCard groups
+GET  /v0/debug/today-internal -> optional internal lifecycle buckets
 GET  /v0/requests/:id
 POST /v0/actions/:id/approve
 POST /v0/actions/:id/edit-and-approve
 POST /v0/actions/:id/reject
 POST /v0/actions/:id/execute-local
 ```
+
+The OCaml core maps internal lifecycle states into the user-facing Today groups. Swift consumes the `TodaySnapshot` contract and should not become the implementation site for Today grouping rules.
 
 Future API:
 

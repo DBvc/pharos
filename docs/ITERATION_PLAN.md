@@ -152,11 +152,13 @@ Goal: determine whether the MVP is useful enough to keep expanding.
 
 Use Codex in small vertical cuts:
 
-1. Compile the OCaml starter and fix any dependency drift.
-2. Run M0 manual capture from CLI and HTTP.
-3. Improve SwiftUI loading and error states.
-4. Add request detail action editing.
-5. Add a fake adapter that replays JSON examples.
-6. Add adapter identity and merge tests.
-7. Add metrics aggregation for manual requests.
-8. Package `pharosd` into the app bundle.
+1. Align v0.3 PRD, docs, and OpenAPI around the Today decision cockpit contract.
+2. Implement `DecisionCard` DTO and Today mapping in the OCaml core before real source adapters.
+3. Compile the OCaml starter and fix any dependency drift.
+4. Run M0 manual capture from CLI and HTTP.
+5. Improve SwiftUI loading and error states.
+6. Add request detail action editing.
+7. Add a fake adapter that replays JSON examples.
+8. Add adapter identity and merge tests.
+9. Add metrics aggregation for manual requests.
+10. Package `pharosd` into the app bundle.

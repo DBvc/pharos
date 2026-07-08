@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Pharos Local API
-  version: 0.0.1
+  version: 0.0.3
 servers:
   - url: http://127.0.0.1:8765
 paths:
@@ -28,7 +28,18 @@ paths:
       operationId: today
       responses:
         '200':
-          description: Today snapshot
+          description: User-facing Today snapshot grouped by attention needs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TodaySnapshot'
+  /v0/debug/today-internal:
+    get:
+      operationId: todayInternalDebug
+      description: Optional debug route. SwiftUI must not use this route.
+      responses:
+        '200':
+          description: Internal lifecycle-bucket snapshot.
   /v0/requests/{id}:
     get:
       operationId: getRequest
@@ -101,6 +112,14 @@ paths:
           description: Executed local action
 components:
   schemas:
+    AttentionGroup:
+      type: string
+      enum:
+        - needs_decision
+        - needs_input
+        - watching
+        - handled
+        - noise
     CaptureRequest:
       type: object
       required: [body]
@@ -112,4 +131,94 @@ components:
         url:
           type: string
         actor:
+          type: string
+    TodaySnapshot:
+      type: object
+      required:
+        - needs_decision
+        - needs_input
+        - watching
+        - handled
+        - noise
+      properties:
+        needs_decision:
+          type: array
+          items:
+            $ref: '#/components/schemas/DecisionCard'
+        needs_input:
+          type: array
+          items:
+            $ref: '#/components/schemas/DecisionCard'
+        watching:
+          type: array
+          items:
+            $ref: '#/components/schemas/DecisionCard'
+        handled:
+          type: array
+          items:
+            $ref: '#/components/schemas/DecisionCard'
+        noise:
+          $ref: '#/components/schemas/NoiseSummary'
+    NoiseSummary:
+      type: object
+      required:
+        - count
+      properties:
+        count:
+          type: integer
+          minimum: 0
+    DecisionCard:
+      type: object
+      required:
+        - request_id
+        - title
+        - summary
+        - group
+        - source_kind
+        - source_url
+        - priority
+        - risk
+        - why_now
+        - prepared_next_move
+        - target_preview
+        - evidence_count
+        - updated_at
+        - debug_status
+      properties:
+        request_id:
+          type: string
+        title:
+          type: string
+        summary:
+          type: string
+        group:
+          $ref: '#/components/schemas/AttentionGroup'
+        source_kind:
+          type: string
+        source_url:
+          type:
+            - string
+            - 'null'
+        priority:
+          type: string
+          enum: [low, normal, high, urgent]
+        risk:
+          type: string
+          enum: [l0, l1, l2, l3, l4, l5]
+        why_now:
+          type: string
+        prepared_next_move:
+          type:
+            - string
+            - 'null'
+        target_preview:
+          type:
+            - string
+            - 'null'
+        evidence_count:
+          type: integer
+          minimum: 0
+        updated_at:
+          type: string
+        debug_status:
           type: string

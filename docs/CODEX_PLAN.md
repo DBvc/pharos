@@ -11,6 +11,21 @@ This document is written for repeated Codex iterations. Each task should leave t
 5. Keep each iteration vertical and demoable.
 6. Update docs when architecture changes.
 
+## Task 000: Align v0.3 PRD, docs, and OpenAPI
+
+Prompt:
+
+```text
+Align README, docs/API.md, docs/ARCHITECTURE.md, docs/ITERATION_PLAN.md, docs/CODEX_PLAN.md, and protocol/openapi.yaml with docs/PRD_v0.3.md. The user-facing Today contract is a decision cockpit: Needs Decision, Needs Input, Watching, Handled, and Noise. Preserve internal lifecycle states for audit/debugging, and allow old lifecycle buckets only under /v0/debug/today-internal. Do not change OCaml or Swift runtime code in this task.
+```
+
+Acceptance:
+
+- README identifies docs/PRD_v0.3.md as the MVP scope source of truth.
+- docs/API.md and protocol/openapi.yaml agree on the v0.3 `/v0/today` response.
+- Architecture states that `/v0/today` returns `TodaySnapshot` with `DecisionCard` groups.
+- This is v0.3 plan Task 01. v0.3 plan Tasks 01-03 are not releasable independently until docs/API/OpenAPI, core DTO mapping, and Swift UI consumption all agree.
+
 ## Task 001: Verify M0 build
 
 Prompt:

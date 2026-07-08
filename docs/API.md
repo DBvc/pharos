@@ -44,14 +44,36 @@ Response shape:
 
 ```json
 {
-  "needs_review": [],
-  "running": [],
-  "needs_context": [],
-  "new_items": [],
-  "done_today": [],
-  "archived_noise_count": 0
+  "needs_decision": [
+    {
+      "request_id": "req_...",
+      "title": "Review retry logic MR",
+      "summary": "A GitLab MR is waiting for review.",
+      "group": "needs_decision",
+      "source_kind": "gitlab",
+      "source_url": "https://gitlab.example.com/group/project/-/merge_requests/123",
+      "priority": "normal",
+      "risk": "l2",
+      "why_now": "You were requested as reviewer.",
+      "prepared_next_move": "Review the prepared comment draft.",
+      "target_preview": "pharos.local.complete_request / req_...",
+      "evidence_count": 3,
+      "updated_at": "2026-07-08T00:00:00Z",
+      "debug_status": "ready_for_review"
+    }
+  ],
+  "needs_input": [],
+  "watching": [],
+  "handled": [],
+  "noise": {
+    "count": 0
+  }
 }
 ```
+
+`/v0/today` is the user-facing `TodaySnapshot` contract. It returns `DecisionCard` groups: `needs_decision`, `needs_input`, `watching`, `handled`, and `noise`.
+
+The old lifecycle buckets `needs_review`, `running`, `needs_context`, `new_items`, `done_today`, and `archived_noise_count` may exist only under optional debug route `GET /v0/debug/today-internal`. Swift Today clients must consume `/v0/today` as the default product surface.
 
 ## GET /v0/requests/:id
 

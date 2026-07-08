@@ -92,6 +92,7 @@ Pharos should feel like a tower cockpit, not a runaway sprinkler system. The cor
 ## Important documents
 
 - [User experience](docs/USER_EXPERIENCE.md)
+- [PRD v0.3](docs/PRD_v0.3.md)
 - [PRD v0.2](docs/PRD_v0.2.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Iteration plan](docs/ITERATION_PLAN.md)
@@ -100,6 +101,14 @@ Pharos should feel like a tower cockpit, not a runaway sprinkler system. The cor
 - [Dogfood plan](docs/DOGFOOD.md)
 - [Adapter protocol](docs/ADAPTER_PROTOCOL.md)
 - [Local API](docs/API.md)
+
+## Docs source of truth
+
+Product surface source of truth: `docs/USER_EXPERIENCE.md`
+MVP scope source of truth: `docs/PRD_v0.3.md`
+Architecture source of truth: `docs/ARCHITECTURE.md`
+Codex task source of truth: `docs/CODEX_PLAN.md`
+Historical baseline: `docs/PRD_v0.2.md`
 
 ## Repository status
 
