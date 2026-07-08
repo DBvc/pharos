@@ -51,14 +51,14 @@ let text_col stmt i =
   match S.column stmt i with
   | S.Data.TEXT s -> s
   | S.Data.NULL -> ""
-  | data -> S.Data.to_string data
+  | data -> S.Data.to_string data |> Option.value ~default:""
 
 let opt_text_col stmt i =
   match S.column stmt i with
   | S.Data.NULL -> None
   | S.Data.TEXT s when s = "" -> None
   | S.Data.TEXT s -> Some s
-  | data -> Some (S.Data.to_string data)
+  | data -> S.Data.to_string data
 
 let int_col stmt i =
   match S.column stmt i with
@@ -67,7 +67,7 @@ let int_col stmt i =
   | S.Data.TEXT s -> int_of_string_opt s |> Option.value ~default:0
   | _ -> 0
 
-let insert_source_signal t s =
+let insert_source_signal t (s : source_signal) =
   with_stmt t {|
     INSERT INTO source_signals
     (id, kind, external_id, actor, title, body, url, occurred_at, raw_json)
@@ -84,7 +84,7 @@ let insert_source_signal t s =
     bind_opt_text stmt 9 s.raw_json;
     step_done stmt)
 
-let insert_work_request t r =
+let insert_work_request t (r : work_request) =
   with_stmt t {|
     INSERT INTO work_requests
     (id, title, summary, status, priority, risk, source_kind, source_signal_id, reason, next_step, created_at, updated_at)
@@ -104,7 +104,7 @@ let insert_work_request t r =
     bind_text stmt 12 r.updated_at;
     step_done stmt)
 
-let insert_action t a =
+let insert_action t (a : proposed_action) =
   with_stmt t {|
     INSERT INTO proposed_actions
     (id, request_id, title, body, target_kind, target_ref, risk, requires_approval, status, payload_hash, created_at, updated_at)
@@ -124,7 +124,7 @@ let insert_action t a =
     bind_text stmt 12 a.updated_at;
     step_done stmt)
 
-let insert_approval t a =
+let insert_approval t (a : approval) =
   with_stmt t {|
     INSERT INTO approvals
     (id, action_id, action_hash, decision, approved_body, created_at)
@@ -138,7 +138,7 @@ let insert_approval t a =
     bind_text stmt 6 a.created_at;
     step_done stmt)
 
-let insert_evidence t e =
+let insert_evidence t (e : evidence_item) =
   with_stmt t {|
     INSERT INTO evidence_items
     (id, request_id, kind, title, body, url, created_at)
@@ -153,7 +153,7 @@ let insert_evidence t e =
     bind_text stmt 7 e.created_at;
     step_done stmt)
 
-let insert_timeline t e =
+let insert_timeline t (e : timeline_event) =
   with_stmt t {|
     INSERT INTO timeline_events
     (id, request_id, kind, title, body, created_at)
@@ -190,7 +190,7 @@ let update_action_body_status_hash t ~action_id ~body ~payload_hash ~status =
     bind_text stmt 5 action_id;
     step_done stmt)
 
-let row_to_work_request stmt =
+let row_to_work_request stmt : work_request =
   {
     id = text_col stmt 0;
     title = text_col stmt 1;
@@ -206,7 +206,7 @@ let row_to_work_request stmt =
     updated_at = text_col stmt 11;
   }
 
-let row_to_action stmt =
+let row_to_action stmt : proposed_action =
   {
     id = text_col stmt 0;
     request_id = text_col stmt 1;
@@ -222,7 +222,7 @@ let row_to_action stmt =
     updated_at = text_col stmt 11;
   }
 
-let row_to_approval stmt =
+let row_to_approval stmt : approval =
   {
     id = text_col stmt 0;
     action_id = text_col stmt 1;
@@ -232,7 +232,7 @@ let row_to_approval stmt =
     created_at = text_col stmt 5;
   }
 
-let row_to_evidence stmt =
+let row_to_evidence stmt : evidence_item =
   {
     id = text_col stmt 0;
     request_id = text_col stmt 1;
@@ -243,7 +243,7 @@ let row_to_evidence stmt =
     created_at = text_col stmt 6;
   }
 
-let row_to_timeline stmt =
+let row_to_timeline stmt : timeline_event =
   {
     id = text_col stmt 0;
     request_id = text_col stmt 1;
@@ -350,13 +350,13 @@ let request_detail t request_id =
 
 let today t =
   let all = list_work_requests t in
-  let pick status = List.filter (fun r -> r.status = status) all in
+  let pick status = List.filter (fun (r : work_request) -> r.status = status) all in
   let archived_noise_count = List.length (pick Archived) in
   {
     needs_review = pick ReadyForReview;
     running = pick Running;
     needs_context = pick NeedsContext;
-    new_items = List.filter (fun r -> r.status = New || r.status = Triaging) all;
+    new_items = List.filter (fun (r : work_request) -> r.status = New || r.status = Triaging) all;
     done_today = pick Done;
     archived_noise_count;
   }

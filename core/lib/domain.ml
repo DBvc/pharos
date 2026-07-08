@@ -234,7 +234,7 @@ let risk_is_executable_in_mvp = function
 let payload_hash ~target_kind ~target_ref ~risk ~body =
   Digest.to_hex (Digest.string (String.concat "\n" [ target_kind; target_ref; risk_to_string risk; body ]))
 
-let source_signal_to_yojson s =
+let source_signal_to_yojson (s : source_signal) =
   Json_util.assoc [
     Json_util.str "id" s.id;
     Json_util.str "kind" (source_kind_to_string s.kind);
@@ -247,7 +247,7 @@ let source_signal_to_yojson s =
     Json_util.opt_str "raw_json" s.raw_json;
   ]
 
-let work_request_to_yojson r =
+let work_request_to_yojson (r : work_request) =
   Json_util.assoc [
     Json_util.str "id" r.id;
     Json_util.str "title" r.title;
@@ -263,7 +263,7 @@ let work_request_to_yojson r =
     Json_util.str "updated_at" r.updated_at;
   ]
 
-let proposed_action_to_yojson a =
+let proposed_action_to_yojson (a : proposed_action) =
   Json_util.assoc [
     Json_util.str "id" a.id;
     Json_util.str "request_id" a.request_id;
@@ -279,7 +279,7 @@ let proposed_action_to_yojson a =
     Json_util.str "updated_at" a.updated_at;
   ]
 
-let approval_to_yojson a =
+let approval_to_yojson (a : approval) =
   Json_util.assoc [
     Json_util.str "id" a.id;
     Json_util.str "action_id" a.action_id;
@@ -289,7 +289,7 @@ let approval_to_yojson a =
     Json_util.str "created_at" a.created_at;
   ]
 
-let evidence_item_to_yojson e =
+let evidence_item_to_yojson (e : evidence_item) =
   Json_util.assoc [
     Json_util.str "id" e.id;
     Json_util.str "request_id" e.request_id;
@@ -300,7 +300,7 @@ let evidence_item_to_yojson e =
     Json_util.str "created_at" e.created_at;
   ]
 
-let timeline_event_to_yojson e =
+let timeline_event_to_yojson (e : timeline_event) =
   Json_util.assoc [
     Json_util.str "id" e.id;
     Json_util.str "request_id" e.request_id;
@@ -310,7 +310,7 @@ let timeline_event_to_yojson e =
     Json_util.str "created_at" e.created_at;
   ]
 
-let request_detail_to_yojson d =
+let request_detail_to_yojson (d : request_detail) =
   Json_util.assoc [
     ("request", work_request_to_yojson d.request);
     Json_util.list "actions" proposed_action_to_yojson d.actions;
@@ -318,7 +318,7 @@ let request_detail_to_yojson d =
     Json_util.list "timeline" timeline_event_to_yojson d.timeline;
   ]
 
-let today_snapshot_to_yojson t =
+let today_snapshot_to_yojson (t : today_snapshot) =
   Json_util.assoc [
     Json_util.list "needs_review" work_request_to_yojson t.needs_review;
     Json_util.list "running" work_request_to_yojson t.running;

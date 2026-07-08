@@ -61,7 +61,7 @@ module type S = sig
   val writeback : writeback_request -> (writeback_result, error) result
 end
 
-let capability_to_yojson c =
+let capability_to_yojson (c : capability) =
   Json_util.assoc [
     Json_util.str "source_kind" (source_kind_to_string c.source_kind);
     Json_util.list "read_events" (fun s -> `String s) c.read_events;
