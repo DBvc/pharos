@@ -7,39 +7,17 @@ struct TodayView: View {
         NavigationSplitView {
             List(selection: $appState.selectedRequestId) {
                 if let snapshot = appState.snapshot {
-                    Section("Needs Review") {
-                        ForEach(snapshot.needsReview) { request in
-                            RequestRow(request: request)
-                                .tag(request.id)
-                                .onTapGesture { Task { await appState.select(request) } }
-                        }
+                    DecisionSection(title: AttentionGroup.needsDecision.label, cards: snapshot.needsDecision, emptyText: "No decisions waiting.")
+                    DecisionSection(title: AttentionGroup.needsInput.label, cards: snapshot.needsInput, emptyText: "No input needed.")
+                    if !snapshot.watching.isEmpty {
+                        DecisionSection(title: AttentionGroup.watching.label, cards: snapshot.watching)
                     }
-                    Section("Running") {
-                        ForEach(snapshot.running) { request in
-                            RequestRow(request: request)
-                                .tag(request.id)
-                                .onTapGesture { Task { await appState.select(request) } }
-                        }
+                    if !snapshot.handled.isEmpty {
+                        DecisionSection(title: AttentionGroup.handled.label, cards: snapshot.handled)
                     }
-                    Section("Needs Context") {
-                        ForEach(snapshot.needsContext) { request in
-                            RequestRow(request: request)
-                                .tag(request.id)
-                                .onTapGesture { Task { await appState.select(request) } }
-                        }
-                    }
-                    Section("New") {
-                        ForEach(snapshot.newItems) { request in
-                            RequestRow(request: request)
-                                .tag(request.id)
-                                .onTapGesture { Task { await appState.select(request) } }
-                        }
-                    }
-                    Section("Done Today") {
-                        ForEach(snapshot.doneToday) { request in
-                            RequestRow(request: request)
-                                .tag(request.id)
-                                .onTapGesture { Task { await appState.select(request) } }
+                    if snapshot.noise.count > 0 {
+                        Section(AttentionGroup.noise.label) {
+                            NoiseSummaryRow(count: snapshot.noise.count)
                         }
                     }
                 } else if appState.isLoading {
@@ -59,28 +37,75 @@ struct TodayView: View {
     }
 }
 
-struct RequestRow: View {
-    let request: WorkRequest
+private struct DecisionSection: View {
+    @EnvironmentObject private var appState: AppState
+    let title: String
+    let cards: [DecisionCard]
+    var emptyText: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(request.title)
+        Section(title) {
+            if cards.isEmpty, let emptyText {
+                Text(emptyText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 6)
+            } else {
+                ForEach(cards) { card in
+                    DecisionCardRow(card: card)
+                        .tag(card.requestId)
+                        .onTapGesture { Task { await appState.select(card) } }
+                }
+            }
+        }
+    }
+}
+
+private struct DecisionCardRow: View {
+    let card: DecisionCard
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(card.title)
                 .font(.headline)
                 .lineLimit(2)
-            Text(request.summary)
+            Text(card.summary)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
-            HStack {
-                StatusBadge(text: request.status.label)
-                StatusBadge(text: request.priority.rawValue.uppercased())
-                StatusBadge(text: request.risk.label)
+            Text(card.whyNow)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            if let preparedNextMove = card.preparedNextMove, !preparedNextMove.isEmpty {
+                Text(preparedNextMove)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(2)
+            }
+            HStack(spacing: 6) {
+                StatusBadge(text: card.priority.rawValue.uppercased())
+                StatusBadge(text: card.risk.label)
+                StatusBadge(text: card.sourceKind.rawValue)
                 Spacer()
-                Text(request.sourceKind.rawValue)
+                Text("\(card.evidenceCount) evidence")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+private struct NoiseSummaryRow: View {
+    let count: Int
+
+    var body: some View {
+        HStack {
+            Text("\(count) archived as noise")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.vertical, 6)
     }
 }

@@ -32,7 +32,7 @@ struct PharosApp: App {
                 Task { await appState.refreshToday() }
             }
             Divider()
-            Text("Needs Review: \(appState.snapshot?.needsReview.count ?? 0)")
+            Text("Needs Decision: \(appState.snapshot?.needsDecision.count ?? 0)")
         }
     }
 }

@@ -32,6 +32,11 @@ final class AppState: ObservableObject {
         await loadDetail(id: request.id)
     }
 
+    func select(_ card: DecisionCard) async {
+        selectedRequestId = card.requestId
+        await loadDetail(id: card.requestId)
+    }
+
     func loadDetail(id: String) async {
         isLoading = true
         defer { isLoading = false }

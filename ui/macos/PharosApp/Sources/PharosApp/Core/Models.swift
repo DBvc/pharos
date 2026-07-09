@@ -24,7 +24,7 @@ enum RequestStatus: String, Codable {
 
     var label: String {
         switch self {
-        case .readyForReview: return "Needs Review"
+        case .readyForReview: return "Ready For Review"
         case .needsContext: return "Needs Context"
         default: return rawValue.replacingOccurrences(of: "_", with: " ").capitalized
         }
@@ -107,13 +107,53 @@ struct TimelineEvent: Identifiable, Codable, Hashable {
     let createdAt: String
 }
 
+enum AttentionGroup: String, Codable {
+    case needsDecision = "needs_decision"
+    case needsInput = "needs_input"
+    case watching
+    case handled
+    case noise
+
+    var label: String {
+        switch self {
+        case .needsDecision: return "Needs Decision"
+        case .needsInput: return "Needs Input"
+        case .watching: return "Watching"
+        case .handled: return "Handled"
+        case .noise: return "Noise"
+        }
+    }
+}
+
+struct DecisionCard: Identifiable, Codable, Hashable {
+    let requestId: String
+    let title: String
+    let summary: String
+    let group: AttentionGroup
+    let sourceKind: SourceKind
+    let sourceUrl: String?
+    let priority: Priority
+    let risk: Risk
+    let whyNow: String
+    let preparedNextMove: String?
+    let targetPreview: String?
+    let evidenceCount: Int
+    let updatedAt: String
+    let debugStatus: RequestStatus
+
+    var id: String { requestId }
+}
+
+struct NoiseSummary: Codable, Hashable {
+    let count: Int
+}
+
 struct TodaySnapshot: Codable {
-    let needsReview: [WorkRequest]
-    let running: [WorkRequest]
-    let needsContext: [WorkRequest]
-    let newItems: [WorkRequest]
-    let doneToday: [WorkRequest]
-    let archivedNoiseCount: Int
+    let needsDecision: [DecisionCard]
+    let needsInput: [DecisionCard]
+    let watching: [DecisionCard]
+    let handled: [DecisionCard]
+    let noise: NoiseSummary
 }
 
 struct RequestDetail: Codable {
