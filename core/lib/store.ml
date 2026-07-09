@@ -167,6 +167,27 @@ let insert_timeline t (e : timeline_event) =
     bind_text stmt 6 e.created_at;
     step_done stmt)
 
+let upsert_work_request_identity t (identity : work_request_identity) =
+  with_stmt t {|
+    INSERT INTO work_request_identities
+    (identity_key, request_id, source_kind, external_key, normalized_subject, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(identity_key) DO UPDATE SET
+      request_id = excluded.request_id,
+      source_kind = excluded.source_kind,
+      external_key = excluded.external_key,
+      normalized_subject = excluded.normalized_subject,
+      updated_at = excluded.updated_at
+  |} (fun stmt ->
+    bind_text stmt 1 identity.identity_key;
+    bind_text stmt 2 identity.request_id;
+    bind_text stmt 3 (source_kind_to_string identity.source_kind);
+    bind_text stmt 4 identity.external_key;
+    bind_text stmt 5 identity.normalized_subject;
+    bind_text stmt 6 identity.created_at;
+    bind_text stmt 7 identity.updated_at;
+    step_done stmt)
+
 let update_request_status t ~request_id ~status =
   with_stmt t "UPDATE work_requests SET status = ?, updated_at = ? WHERE id = ?" (fun stmt ->
     bind_text stmt 1 (request_status_to_string status);
@@ -188,6 +209,19 @@ let update_action_body_status_hash t ~action_id ~body ~payload_hash ~status =
     bind_text stmt 3 (action_status_to_string status);
     bind_text stmt 4 (Time.now_iso ());
     bind_text stmt 5 action_id;
+    step_done stmt)
+
+let update_work_request_from_source_signal t ~request_id ~title ~summary ~source_signal_id =
+  with_stmt t {|
+    UPDATE work_requests
+    SET title = ?, summary = ?, source_signal_id = ?, updated_at = ?
+    WHERE id = ?
+  |} (fun stmt ->
+    bind_text stmt 1 title;
+    bind_text stmt 2 summary;
+    bind_text stmt 3 source_signal_id;
+    bind_text stmt 4 (Time.now_iso ());
+    bind_text stmt 5 request_id;
     step_done stmt)
 
 let row_to_work_request stmt : work_request =
@@ -243,6 +277,17 @@ let row_to_approval stmt : approval =
     decision = approval_decision_of_string (text_col stmt 3);
     approved_body = opt_text_col stmt 4;
     created_at = text_col stmt 5;
+  }
+
+let row_to_work_request_identity stmt : work_request_identity =
+  {
+    identity_key = text_col stmt 0;
+    request_id = text_col stmt 1;
+    source_kind = source_kind_of_string (text_col stmt 2);
+    external_key = text_col stmt 3;
+    normalized_subject = text_col stmt 4;
+    created_at = text_col stmt 5;
+    updated_at = text_col stmt 6;
   }
 
 let row_to_evidence stmt : evidence_item =
@@ -349,6 +394,18 @@ let latest_action_by_request t request_id =
     | S.Rc.ROW -> Some (row_to_action stmt)
     | S.Rc.DONE -> None
     | rc -> fail_sql "SQLite latest_action_by_request failed" rc)
+
+let get_work_request_identity t identity_key =
+  with_stmt t {|
+    SELECT identity_key, request_id, source_kind, external_key, normalized_subject, created_at, updated_at
+    FROM work_request_identities
+    WHERE identity_key = ?
+  |} (fun stmt ->
+    bind_text stmt 1 identity_key;
+    match S.step stmt with
+    | S.Rc.ROW -> Some (row_to_work_request_identity stmt)
+    | S.Rc.DONE -> None
+    | rc -> fail_sql "SQLite get_work_request_identity failed" rc)
 
 let has_reviewable_action t request_id =
   with_stmt t "SELECT 1 FROM proposed_actions WHERE request_id = ? AND status = ? LIMIT 1" (fun stmt ->

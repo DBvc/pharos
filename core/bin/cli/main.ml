@@ -8,6 +8,7 @@ let db_path () =
 let usage () =
   prerr_endline "Usage:";
   prerr_endline "  pharos capture <body> [--title <title>] [--url <url>]";
+  prerr_endline "  pharos replay <path-to-json>";
   prerr_endline "  pharos today";
   prerr_endline "  pharos today-internal";
   prerr_endline "  pharos detail <request-id>";
@@ -30,6 +31,12 @@ let with_store f =
   let store = Store.connect (db_path ()) in
   Fun.protect ~finally:(fun () -> Store.close store) (fun () -> f store)
 
+let read_file path =
+  let channel = open_in_bin path in
+  Fun.protect
+    ~finally:(fun () -> close_in_noerr channel)
+    (fun () -> really_input_string channel (in_channel_length channel))
+
 let () =
   match List.tl (Array.to_list Sys.argv) with
   | "capture" :: rest ->
@@ -38,6 +45,19 @@ let () =
       with_store (fun store ->
         let request = Runner.capture_manual store { Runner.title = title; body; url; actor = Some "cli" } in
         print_json (Domain.work_request_to_yojson request))
+  | [ "replay"; path ] ->
+      let body = read_file path in
+      begin match Yojson.Safe.from_string body with
+      | exception Yojson.Json_error e -> prerr_endline ("Invalid JSON: " ^ e); exit 1
+      | payload ->
+          begin match Runner.source_signal_input_of_json payload with
+          | Error e -> prerr_endline e; exit 1
+          | Ok input ->
+              with_store (fun store ->
+                let response = Runner.ingest_source_signal store input in
+                print_json (Runner.source_signal_response_to_yojson response))
+          end
+      end
   | [ "today" ] ->
       with_store (fun store -> print_json (Domain.today_decision_snapshot_to_yojson (Runner.today store)))
   | [ "today-internal" ] ->

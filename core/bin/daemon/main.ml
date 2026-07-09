@@ -32,6 +32,17 @@ let capture store req =
             ("detail_url", `String ("/v0/requests/" ^ request.id));
           ])
 
+let source_signal store req =
+  Dream.body req >>= fun body ->
+  match Yojson.Safe.from_string body with
+  | exception Yojson.Json_error e -> error_response ("Invalid JSON: " ^ e)
+  | payload ->
+      match Runner.source_signal_input_of_json payload with
+      | Error e -> error_response e
+      | Ok input ->
+          let response = Runner.ingest_source_signal store input in
+          json (Runner.source_signal_response_to_yojson response)
+
 let get_request store req =
   let id = Dream.param req "id" in
   match Runner.get_detail store id with
@@ -74,6 +85,7 @@ let routes store =
   Dream.router [
     Dream.get "/health" (fun _ -> json (`Assoc [ ("ok", `Bool true); ("service", `String "pharosd") ]));
     Dream.post "/v0/capture" (capture store);
+    Dream.post "/v0/source-signals" (source_signal store);
     Dream.get "/v0/today" (fun _ -> json (Domain.today_decision_snapshot_to_yojson (Runner.today store)));
     Dream.get "/v0/debug/today-internal" (fun _ -> json (Domain.today_snapshot_to_yojson (Runner.today_internal store)));
     Dream.get "/v0/requests/:id" (get_request store);

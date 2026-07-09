@@ -1,12 +1,12 @@
 {
-  "source_kind": "feishu_chat",
-  "external_id": "chat/oc_abc/thread/msg_123",
+  "kind": "feishu_chat",
+  "external_id": "feishu:chat/oc_abc:message/msg_123",
   "actor": "bob",
   "title": "Bob asked about rollout timing",
-  "body": "@you 这个重试逻辑今天能确认上线窗口吗？",
+  "body": "@you Can we confirm the rollout window for the retry logic today?",
   "url": "https://feishu.example/messages/msg_123",
   "occurred_at": "2026-07-07T10:05:00Z",
-  "raw": {
+  "raw_json": {
     "chat_id": "oc_abc",
     "message_id": "msg_123"
   }

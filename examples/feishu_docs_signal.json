@@ -1,0 +1,13 @@
+{
+  "kind": "feishu_docs",
+  "external_id": "feishu:doc/doc_123:comment/comment_456",
+  "actor": "dana",
+  "title": "Doc comment needs owner response",
+  "body": "Dana mentioned you in a product spec comment asking for the owner response.",
+  "url": "https://feishu.example/docs/doc_123?comment=comment_456",
+  "occurred_at": "2026-07-07T12:15:00Z",
+  "raw_json": {
+    "doc_id": "doc_123",
+    "comment_id": "comment_456"
+  }
+}

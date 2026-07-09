@@ -5,3 +5,7 @@
 (test
  (name today_decision)
  (libraries pharos_core yojson))
+
+(test
+ (name merge_identity_test)
+ (libraries pharos_core yojson))

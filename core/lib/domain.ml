@@ -104,6 +104,16 @@ type timeline_event = {
   created_at : string;
 }
 
+type work_request_identity = {
+  identity_key : string;
+  request_id : string;
+  source_kind : source_kind;
+  external_key : string;
+  normalized_subject : string;
+  created_at : string;
+  updated_at : string;
+}
+
 type request_detail = {
   request : work_request;
   actions : proposed_action list;

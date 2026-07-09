@@ -38,6 +38,40 @@ Response:
 }
 ```
 
+## POST /v0/source-signals
+
+Ingests a source-adapter signal or replay fixture. Replaying the same stable
+external object updates one active request instead of creating duplicate Today
+cards.
+
+Request:
+
+```json
+{
+  "kind": "gitlab",
+  "external_id": "gitlab:project/123:mr/456",
+  "actor": "alice",
+  "title": "Review requested: billing retry logic",
+  "body": "Alice requested your review on MR !456.",
+  "url": "https://gitlab.example/group/project/-/merge_requests/456",
+  "occurred_at": "2026-07-07T09:30:00Z",
+  "raw_json": {}
+}
+```
+
+Response:
+
+```json
+{
+  "request": {"id":"..."},
+  "merged": true,
+  "detail_url": "/v0/requests/..."
+}
+```
+
+Identity uses `external_id` first, then canonical URL, and only falls back to a
+normalized subject when no stable external object id or URL exists.
+
 ## GET /v0/today
 
 Response shape:

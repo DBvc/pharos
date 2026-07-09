@@ -1,0 +1,14 @@
+{
+  "kind": "feishu_project",
+  "external_id": "feishu:project/proj_123:item/story_456",
+  "actor": "carol",
+  "title": "Project item blocked on API review",
+  "body": "Carol marked the launch checklist item as blocked until the API review is complete.",
+  "url": "https://feishu.example/project/proj_123/story_456",
+  "occurred_at": "2026-07-07T11:20:00Z",
+  "raw_json": {
+    "project_id": "proj_123",
+    "item_id": "story_456",
+    "status": "blocked"
+  }
+}

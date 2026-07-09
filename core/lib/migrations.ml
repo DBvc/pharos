@@ -95,7 +95,19 @@ let run db =
       unapproved_external_write_attempts INTEGER NOT NULL DEFAULT 0
     )
   |};
+  exec db {|
+    CREATE TABLE IF NOT EXISTS work_request_identities (
+      identity_key TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL,
+      source_kind TEXT NOT NULL,
+      external_key TEXT NOT NULL,
+      normalized_subject TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  |};
   exec db "CREATE INDEX IF NOT EXISTS idx_work_requests_status ON work_requests(status)";
   exec db "CREATE INDEX IF NOT EXISTS idx_actions_request_id ON proposed_actions(request_id)";
   exec db "CREATE INDEX IF NOT EXISTS idx_evidence_request_id ON evidence_items(request_id)";
-  exec db "CREATE INDEX IF NOT EXISTS idx_timeline_request_id ON timeline_events(request_id)"
+  exec db "CREATE INDEX IF NOT EXISTS idx_timeline_request_id ON timeline_events(request_id)";
+  exec db "CREATE INDEX IF NOT EXISTS idx_work_request_identities_request_id ON work_request_identities(request_id)"

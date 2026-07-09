@@ -23,6 +23,22 @@ paths:
       responses:
         '200':
           description: Created request
+  /v0/source-signals:
+    post:
+      operationId: ingestSourceSignal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceSignalRequest'
+      responses:
+        '200':
+          description: Source signal ingested or merged into an active request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceSignalResponse'
   /v0/today:
     get:
       operationId: today
@@ -131,6 +147,99 @@ components:
         url:
           type: string
         actor:
+          type: string
+    SourceSignalRequest:
+      type: object
+      required:
+        - kind
+        - actor
+        - title
+        - body
+        - occurred_at
+      properties:
+        kind:
+          type: string
+          enum: [manual, feishu_chat, feishu_project, gitlab, feishu_docs]
+        external_id:
+          type:
+            - string
+            - 'null'
+        actor:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        url:
+          type:
+            - string
+            - 'null'
+        occurred_at:
+          type: string
+        raw_json:
+          oneOf:
+            - type: string
+            - type: object
+            - type: 'null'
+    SourceSignalResponse:
+      type: object
+      required:
+        - request
+        - merged
+        - detail_url
+      properties:
+        request:
+          $ref: '#/components/schemas/RequestRef'
+        merged:
+          type: boolean
+        detail_url:
+          type: string
+    RequestRef:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+    WorkRequest:
+      type: object
+      required:
+        - id
+        - title
+        - summary
+        - status
+        - priority
+        - risk
+        - source_kind
+        - source_signal_id
+        - reason
+        - next_step
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        summary:
+          type: string
+        status:
+          type: string
+        priority:
+          type: string
+        risk:
+          type: string
+        source_kind:
+          type: string
+        source_signal_id:
+          type: string
+        reason:
+          type: string
+        next_step:
+          type: string
+        created_at:
+          type: string
+        updated_at:
           type: string
     TodaySnapshot:
       type: object
