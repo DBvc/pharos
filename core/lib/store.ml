@@ -486,6 +486,33 @@ let today_decision t =
     noise = { count = List.length (pick Noise) };
   }
 
+let row_to_metric stmt : Metrics.daily =
+  {
+    day = text_col stmt 0;
+    source_signals = int_col stmt 1;
+    work_requests = int_col stmt 2;
+    ready_for_review = int_col stmt 3;
+    approvals = int_col stmt 4;
+    edit_approvals = int_col stmt 5;
+    rejects = int_col stmt 6;
+    external_writes = int_col stmt 7;
+    unapproved_external_write_attempts = int_col stmt 8;
+  }
+
+let get_metric_for_day t day =
+  with_stmt t {|
+    SELECT day, source_signals, work_requests, ready_for_review, approvals,
+           edit_approvals, rejects, external_writes,
+           unapproved_external_write_attempts
+    FROM metrics_daily
+    WHERE day = ?
+  |} (fun stmt ->
+    bind_text stmt 1 day;
+    match S.step stmt with
+    | S.Rc.ROW -> Some (row_to_metric stmt)
+    | S.Rc.DONE -> None
+    | rc -> fail_sql "SQLite get_metric_for_day failed" rc)
+
 let bump_metric t column =
   let day = Time.today_utc () in
   let sql = Printf.sprintf {|

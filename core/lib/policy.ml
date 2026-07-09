@@ -104,10 +104,20 @@ let execute_local store action_id =
   match Store.get_action store action_id with
   | None -> Error (ActionNotFound action_id)
   | Some action ->
-      if not (risk_is_executable_in_mvp action.risk) then Error (RiskNotExecutableInMvp action.risk)
-      else if action.status = ActionRejected then Error (RejectedAction action_id)
+      if action.status = ActionRejected then Error (RejectedAction action_id)
       else if not (String.starts_with ~prefix:"pharos." action.target_kind) then
+        let body = Printf.sprintf
+          "target_kind=%s; action_id=%s; reason=external_writeback_not_available"
+          action.target_kind action.id
+        in
+        Store.insert_timeline store (timeline
+          ~request_id:action.request_id
+          ~kind:"policy_block"
+          ~title:"External writeback blocked by local executor"
+          ~body);
+        Store.bump_metric store "unapproved_external_write_attempts";
         Error (ExternalWritebackNotImplemented action.target_kind)
+      else if not (risk_is_executable_in_mvp action.risk) then Error (RiskNotExecutableInMvp action.risk)
       else
         match verify_approval store action with
         | Error err -> Error err
