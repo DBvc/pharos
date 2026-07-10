@@ -39,6 +39,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SourceSignalResponse'
+  /v0/sources:
+    get:
+      operationId: listSources
+      responses:
+        '200':
+          description: Persistent source settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourcesResponse'
+  /v0/sources/{id}:
+    patch:
+      operationId: patchSource
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourcePatchRequest'
+      responses:
+        '200':
+          description: Updated source settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceResponse'
   /v0/today:
     get:
       operationId: today
@@ -200,6 +232,72 @@ components:
         - id
       properties:
         id:
+          type: string
+    SourceConfig:
+      type: object
+      required:
+        - id
+        - kind
+        - enabled
+        - read_enabled
+        - write_enabled
+        - scope_json
+        - last_sync_at
+        - last_error
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [feishu_chat, feishu_project, gitlab, feishu_docs]
+        enabled:
+          type: boolean
+        read_enabled:
+          type: boolean
+        write_enabled:
+          type: boolean
+        scope_json:
+          type: string
+        last_sync_at:
+          type:
+            - string
+            - 'null'
+        last_error:
+          type:
+            - string
+            - 'null'
+        created_at:
+          type: string
+        updated_at:
+          type: string
+    SourcesResponse:
+      type: object
+      required:
+        - sources
+      properties:
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceConfig'
+    SourceResponse:
+      type: object
+      required:
+        - source
+      properties:
+        source:
+          $ref: '#/components/schemas/SourceConfig'
+    SourcePatchRequest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        read_enabled:
+          type: boolean
+        write_enabled:
+          type: boolean
+        scope_json:
           type: string
     WorkRequest:
       type: object

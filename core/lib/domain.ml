@@ -114,6 +114,26 @@ type work_request_identity = {
   updated_at : string;
 }
 
+type source_config = {
+  id : string;
+  kind : source_kind;
+  enabled : bool;
+  read_enabled : bool;
+  write_enabled : bool;
+  scope_json : string;
+  last_sync_at : string option;
+  last_error : string option;
+  created_at : string;
+  updated_at : string;
+}
+
+type source_config_patch = {
+  enabled : bool option;
+  read_enabled : bool option;
+  write_enabled : bool option;
+  scope_json : string option;
+}
+
 type request_detail = {
   request : work_request;
   actions : proposed_action list;
@@ -363,6 +383,26 @@ let timeline_event_to_yojson (e : timeline_event) =
     Json_util.str "body" e.body;
     Json_util.str "created_at" e.created_at;
   ]
+
+let source_config_to_yojson (s : source_config) =
+  Json_util.assoc [
+    Json_util.str "id" s.id;
+    Json_util.str "kind" (source_kind_to_string s.kind);
+    Json_util.bool "enabled" s.enabled;
+    Json_util.bool "read_enabled" s.read_enabled;
+    Json_util.bool "write_enabled" s.write_enabled;
+    Json_util.str "scope_json" s.scope_json;
+    Json_util.opt_str "last_sync_at" s.last_sync_at;
+    Json_util.opt_str "last_error" s.last_error;
+    Json_util.str "created_at" s.created_at;
+    Json_util.str "updated_at" s.updated_at;
+  ]
+
+let sources_response_to_yojson sources =
+  Json_util.assoc [ Json_util.list "sources" source_config_to_yojson sources ]
+
+let source_response_to_yojson source =
+  Json_util.assoc [ ("source", source_config_to_yojson source) ]
 
 let request_detail_to_yojson (d : request_detail) =
   Json_util.assoc [

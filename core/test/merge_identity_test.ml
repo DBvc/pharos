@@ -66,9 +66,9 @@ let first_action detail =
   | action :: _ -> action
   | [] -> failf "missing action for %s" detail.request.id
 
-let count_timeline kind detail =
+let count_timeline kind (detail : request_detail) =
   detail.timeline
-  |> List.filter (fun event -> event.kind = kind)
+  |> List.filter (fun (event : timeline_event) -> event.kind = kind)
   |> List.length
 
 let test_replay_merges_same_identity () =

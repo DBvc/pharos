@@ -31,6 +31,14 @@ struct APIClient {
         try await request(path: "/v0/capture", method: "POST", body: payload)
     }
 
+    func sources() async throws -> SourcesResponse {
+        try await request(path: "/v0/sources")
+    }
+
+    func patchSource(id: String, payload: SourcePatchPayload) async throws -> SourceResponse {
+        try await request(path: "/v0/sources/\(id)", method: "PATCH", body: payload)
+    }
+
     func approve(actionId: String) async throws -> ApprovalResponse {
         try await request(path: "/v0/actions/\(actionId)/approve", method: "POST", emptyBody: true)
     }

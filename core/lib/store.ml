@@ -9,12 +9,6 @@ let ensure_parent_dir path =
   | "." | "" -> ()
   | dir -> if not (Sys.file_exists dir) then Unix.mkdir dir 0o755
 
-let connect path =
-  ensure_parent_dir path;
-  let db = S.db_open path in
-  Migrations.run db;
-  { db }
-
 let close t = ignore (S.db_close t.db)
 
 let fail_sql msg rc = failwith (Printf.sprintf "%s: %s" msg (S.Rc.to_string rc))
@@ -35,6 +29,7 @@ let bind_opt_text stmt idx = function
   | Some value -> bind_text stmt idx value
 let bind_int stmt idx value = bind stmt idx (S.Data.INT (Int64.of_int value))
 let bool_int b = if b then 1 else 0
+let bind_bool stmt idx value = bind_int stmt idx (bool_int value)
 
 let finalize stmt = ignore (S.finalize stmt)
 
@@ -66,6 +61,8 @@ let int_col stmt i =
   | S.Data.FLOAT f -> int_of_float f
   | S.Data.TEXT s -> int_of_string_opt s |> Option.value ~default:0
   | _ -> 0
+
+let bool_col stmt i = int_col stmt i <> 0
 
 let insert_source_signal t (s : source_signal) =
   with_stmt t {|
@@ -167,6 +164,35 @@ let insert_timeline t (e : timeline_event) =
     bind_text stmt 6 e.created_at;
     step_done stmt)
 
+let source_config_id kind = "src_" ^ source_kind_to_string kind
+
+let p0_source_kinds = [ FeishuChat; FeishuProject; GitLab; FeishuDocs ]
+
+let insert_default_source t kind =
+  let now = Time.now_iso () in
+  with_stmt t {|
+    INSERT INTO sources
+    (id, kind, enabled, read_enabled, write_enabled, scope_json, last_sync_at, last_error, created_at, updated_at)
+    VALUES (?, ?, 0, 0, 0, '{}', NULL, NULL, ?, ?)
+    ON CONFLICT(kind) DO NOTHING
+  |} (fun stmt ->
+    bind_text stmt 1 (source_config_id kind);
+    bind_text stmt 2 (source_kind_to_string kind);
+    bind_text stmt 3 now;
+    bind_text stmt 4 now;
+    step_done stmt)
+
+let ensure_default_sources t =
+  List.iter (insert_default_source t) p0_source_kinds
+
+let connect path =
+  ensure_parent_dir path;
+  let db = S.db_open path in
+  Migrations.run db;
+  let store = { db } in
+  ensure_default_sources store;
+  store
+
 let upsert_work_request_identity t (identity : work_request_identity) =
   with_stmt t {|
     INSERT INTO work_request_identities
@@ -222,6 +248,20 @@ let update_work_request_from_source_signal t ~request_id ~title ~summary ~source
     bind_text stmt 3 source_signal_id;
     bind_text stmt 4 (Time.now_iso ());
     bind_text stmt 5 request_id;
+    step_done stmt)
+
+let update_source_config t (source : source_config) =
+  with_stmt t {|
+    UPDATE sources
+    SET enabled = ?, read_enabled = ?, write_enabled = ?, scope_json = ?, updated_at = ?
+    WHERE id = ?
+  |} (fun stmt ->
+    bind_bool stmt 1 source.enabled;
+    bind_bool stmt 2 source.read_enabled;
+    bind_bool stmt 3 source.write_enabled;
+    bind_text stmt 4 source.scope_json;
+    bind_text stmt 5 source.updated_at;
+    bind_text stmt 6 source.id;
     step_done stmt)
 
 let row_to_work_request stmt : work_request =
@@ -288,6 +328,20 @@ let row_to_work_request_identity stmt : work_request_identity =
     normalized_subject = text_col stmt 4;
     created_at = text_col stmt 5;
     updated_at = text_col stmt 6;
+  }
+
+let row_to_source_config stmt : source_config =
+  {
+    id = text_col stmt 0;
+    kind = source_kind_of_string (text_col stmt 1);
+    enabled = bool_col stmt 2;
+    read_enabled = bool_col stmt 3;
+    write_enabled = bool_col stmt 4;
+    scope_json = text_col stmt 5;
+    last_sync_at = opt_text_col stmt 6;
+    last_error = opt_text_col stmt 7;
+    created_at = text_col stmt 8;
+    updated_at = text_col stmt 9;
   }
 
 let row_to_evidence stmt : evidence_item =
@@ -406,6 +460,46 @@ let get_work_request_identity t identity_key =
     | S.Rc.ROW -> Some (row_to_work_request_identity stmt)
     | S.Rc.DONE -> None
     | rc -> fail_sql "SQLite get_work_request_identity failed" rc)
+
+let list_sources t =
+  with_stmt t {|
+    SELECT id, kind, enabled, read_enabled, write_enabled, scope_json, last_sync_at, last_error, created_at, updated_at
+    FROM sources
+    ORDER BY CASE kind
+      WHEN 'feishu_chat' THEN 1
+      WHEN 'feishu_project' THEN 2
+      WHEN 'gitlab' THEN 3
+      WHEN 'feishu_docs' THEN 4
+      ELSE 99
+    END, kind
+  |} (fun stmt -> collect_rows stmt row_to_source_config)
+
+let get_source t id =
+  with_stmt t {|
+    SELECT id, kind, enabled, read_enabled, write_enabled, scope_json, last_sync_at, last_error, created_at, updated_at
+    FROM sources
+    WHERE id = ?
+  |} (fun stmt ->
+    bind_text stmt 1 id;
+    match S.step stmt with
+    | S.Rc.ROW -> Some (row_to_source_config stmt)
+    | S.Rc.DONE -> None
+    | rc -> fail_sql "SQLite get_source failed" rc)
+
+let patch_source t id (patch : source_config_patch) =
+  match get_source t id with
+  | None -> None
+  | Some source ->
+      let updated = {
+        source with
+        enabled = Option.value patch.enabled ~default:source.enabled;
+        read_enabled = Option.value patch.read_enabled ~default:source.read_enabled;
+        write_enabled = Option.value patch.write_enabled ~default:source.write_enabled;
+        scope_json = Option.value patch.scope_json ~default:source.scope_json;
+        updated_at = Time.now_iso ();
+      } in
+      update_source_config t updated;
+      get_source t id
 
 let has_reviewable_action t request_id =
   with_stmt t "SELECT 1 FROM proposed_actions WHERE request_id = ? AND status = ? LIMIT 1" (fun stmt ->

@@ -6,6 +6,16 @@ enum SourceKind: String, Codable, CaseIterable {
     case feishuProject = "feishu_project"
     case gitlab
     case feishuDocs = "feishu_docs"
+
+    var label: String {
+        switch self {
+        case .manual: return "Manual"
+        case .feishuChat: return "Feishu Chat"
+        case .feishuProject: return "Feishu Project"
+        case .gitlab: return "GitLab"
+        case .feishuDocs: return "Feishu Docs"
+        }
+    }
 }
 
 enum RequestStatus: String, Codable {
@@ -161,6 +171,34 @@ struct RequestDetail: Codable {
     let actions: [ProposedAction]
     let evidence: [EvidenceItem]
     let timeline: [TimelineEvent]
+}
+
+struct SourceConfig: Identifiable, Codable, Hashable {
+    let id: String
+    let kind: SourceKind
+    var enabled: Bool
+    var readEnabled: Bool
+    var writeEnabled: Bool
+    var scopeJson: String
+    let lastSyncAt: String?
+    let lastError: String?
+    let createdAt: String
+    let updatedAt: String
+}
+
+struct SourcesResponse: Decodable {
+    let sources: [SourceConfig]
+}
+
+struct SourceResponse: Decodable {
+    let source: SourceConfig
+}
+
+struct SourcePatchPayload: Encodable {
+    var enabled: Bool?
+    var readEnabled: Bool?
+    var writeEnabled: Bool?
+    var scopeJson: String?
 }
 
 struct CapturePayload: Encodable {

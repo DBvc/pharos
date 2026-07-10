@@ -72,6 +72,58 @@ Response:
 Identity uses `external_id` first, then canonical URL, and only falls back to a
 normalized subject when no stable external object id or URL exists.
 
+## GET /v0/sources
+
+Returns persisted source settings. Empty databases initialize the four P0
+sources with read and write permissions disabled.
+
+Response:
+
+```json
+{
+  "sources": [
+    {
+      "id": "src_gitlab",
+      "kind": "gitlab",
+      "enabled": false,
+      "read_enabled": false,
+      "write_enabled": false,
+      "scope_json": "{}",
+      "last_sync_at": null,
+      "last_error": null,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+```
+
+## PATCH /v0/sources/:id
+
+Updates explicit source settings fields. Omitted fields stay unchanged.
+
+Request:
+
+```json
+{
+  "enabled": true,
+  "read_enabled": true,
+  "write_enabled": false,
+  "scope_json": "{\"projects\":[42]}"
+}
+```
+
+Response:
+
+```json
+{
+  "source": {"id":"src_gitlab"}
+}
+```
+
+`write_enabled` only records source permission. External writes still require
+the Review Gate and policy checks.
+
 ## GET /v0/today
 
 Response shape:

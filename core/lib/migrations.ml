@@ -106,6 +106,20 @@ let run db =
       updated_at TEXT NOT NULL
     )
   |};
+  exec db {|
+    CREATE TABLE IF NOT EXISTS sources (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL UNIQUE,
+      enabled INTEGER NOT NULL,
+      read_enabled INTEGER NOT NULL,
+      write_enabled INTEGER NOT NULL,
+      scope_json TEXT NOT NULL,
+      last_sync_at TEXT,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  |};
   exec db "CREATE INDEX IF NOT EXISTS idx_work_requests_status ON work_requests(status)";
   exec db "CREATE INDEX IF NOT EXISTS idx_actions_request_id ON proposed_actions(request_id)";
   exec db "CREATE INDEX IF NOT EXISTS idx_evidence_request_id ON evidence_items(request_id)";

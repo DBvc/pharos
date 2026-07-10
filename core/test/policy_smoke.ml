@@ -25,8 +25,12 @@ let expect_risk_error label expected = function
   | Error err -> failf "%s: unexpected error %s" label (Policy.error_to_string err)
   | Ok _ -> failf "%s: expected risk block" label
 
-let expect_timeline_kind detail kind =
-  match List.find_opt (fun event -> event.kind = kind) detail.timeline with
+let expect_timeline_kind (detail : request_detail) kind =
+  match
+    List.find_opt
+      (fun (event : timeline_event) -> event.kind = kind)
+      detail.timeline
+  with
   | Some event -> event
   | None -> failf "expected timeline kind %s" kind
 

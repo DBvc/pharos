@@ -9,3 +9,7 @@
 (test
  (name merge_identity_test)
  (libraries pharos_core yojson))
+
+(test
+ (name source_settings_test)
+ (libraries pharos_core yojson))
