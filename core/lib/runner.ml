@@ -24,6 +24,13 @@ type source_signal_response = {
   detail_url : string;
 }
 
+type evidence_input = {
+  kind : string;
+  title : string;
+  body : string;
+  url : string option;
+}
+
 let capture_input_of_json json =
   match Json_util.required_string "body" json with
   | Error e -> Error e
@@ -409,6 +416,27 @@ let source_signal_response_to_yojson (response : source_signal_response) =
     Json_util.bool "merged" response.merged;
     Json_util.str "detail_url" response.detail_url;
   ]
+
+let attach_evidence ?(managed_kinds=[]) store ~request_id
+    (items : evidence_input list) =
+  let now = Time.now_iso () in
+  List.iter (fun kind ->
+    if not (List.exists (fun (item : evidence_input) -> item.kind = kind) items)
+    then Store.delete_evidence_by_request_kind store ~request_id ~kind)
+    managed_kinds;
+  List.iter (fun (item : evidence_input) ->
+    Store.upsert_evidence_by_request_kind store {
+      id = Ids.create "ev";
+      request_id;
+      kind = item.kind;
+      title = item.title;
+      body = item.body;
+      url = item.url;
+      created_at = now;
+    }) items;
+  Store.insert_timeline store
+    (timeline ~request_id ~kind:"context" ~title:"Source context refreshed"
+      ~body:(Printf.sprintf "%d evidence items attached" (List.length items)))
 
 let get_detail = Store.request_detail
 let today = Store.today_decision

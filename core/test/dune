@@ -13,3 +13,7 @@
 (test
  (name source_settings_test)
  (libraries pharos_core yojson))
+
+(test
+ (name gitlab_read_parser_test)
+ (libraries pharos_core yojson))

@@ -124,6 +124,45 @@ Response:
 `write_enabled` only records source permission. External writes still require
 the Review Gate and policy checks.
 
+## GitLab read-only sync CLI
+
+`pharos sync-gitlab` runs one development-only, read-only GitLab MR sync using
+environment configuration. It reads merge requests awaiting review plus open
+merge requests from configured projects, then refreshes bounded metadata,
+pipeline, and discussion evidence.
+
+Required environment variables:
+
+```text
+PHAROS_GITLAB_BASE_URL=https://gitlab.example.com
+PHAROS_GITLAB_TOKEN=...
+```
+
+Optional environment variables:
+
+```text
+PHAROS_GITLAB_USERNAME=dbvc
+PHAROS_GITLAB_PROJECTS=42,77
+```
+
+Successful output:
+
+```json
+{"processed":2}
+```
+
+Missing configuration or an upstream GitLab/parser failure exits non-zero and
+updates `src_gitlab.last_error`. A successful run updates `last_sync_at` and
+clears the prior error. The token is never persisted and the command never calls
+a GitLab write endpoint.
+
+```bash
+pharos sync-gitlab
+```
+
+The daemon does not expose a GitLab sync route until the local API has a
+capability-token transport.
+
 ## GET /v0/today
 
 Response shape:

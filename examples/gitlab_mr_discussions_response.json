@@ -1,0 +1,32 @@
+[
+  {
+    "id": "discussion-1",
+    "individual_note": false,
+    "notes": [
+      {
+        "id": 1001,
+        "body": "Can we keep the retry budget bounded when the upstream remains unavailable?",
+        "author": {
+          "username": "bob"
+        },
+        "resolvable": true,
+        "resolved": false
+      }
+    ]
+  },
+  {
+    "id": "discussion-2",
+    "individual_note": false,
+    "notes": [
+      {
+        "id": 1002,
+        "body": "The integration test now covers the timeout path.",
+        "author": {
+          "username": "alice"
+        },
+        "resolvable": true,
+        "resolved": true
+      }
+    ]
+  }
+]

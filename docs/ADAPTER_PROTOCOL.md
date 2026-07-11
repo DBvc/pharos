@@ -96,6 +96,32 @@ The adapter returns:
 
 Adapter errors should become source status and timeline events, not daemon crashes.
 
+## GitLab read-only adapter
+
+The first real adapter polls GitLab API v4 with `pharos sync-gitlab`. It
+performs only these GET operations:
+
+```text
+GET /api/v4/merge_requests?scope=reviews_for_me&state=opened
+GET /api/v4/projects/:id/merge_requests?state=opened
+GET /api/v4/projects/:id/merge_requests/:iid
+GET /api/v4/projects/:id/merge_requests/:iid/discussions
+GET /api/v4/projects/:id/merge_requests/:iid/pipelines
+```
+
+Each MR becomes a GitLab `SourceSignal` with stable identity
+`gitlab:project/<project_id>:mr/<iid>`, then enters the same Runner path as fake
+replay. The adapter attaches bounded `gitlab.mr.metadata`,
+`gitlab.mr.pipeline` when known, and `gitlab.mr.discussions` evidence. Every
+evidence body is limited to 4000 bytes.
+
+Credentials come only from `PHAROS_GITLAB_TOKEN`. The OCaml client removes the
+token variable from curl's child environment and passes the private-token header
+over stdin, so the token does not appear in child process arguments, logs,
+source signals, evidence, or SQLite. The adapter follows no redirects and
+exposes no write operation. No daemon sync route is exposed until the local API
+has a capability-token transport.
+
 ## Language choice
 
 The core is OCaml. Adapters may be OCaml or external workers. Use the language that gives the safest and fastest SDK path, but keep the protocol stable.

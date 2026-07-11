@@ -9,6 +9,7 @@ let usage () =
   prerr_endline "Usage:";
   prerr_endline "  pharos capture <body> [--title <title>] [--url <url>]";
   prerr_endline "  pharos replay <path-to-json>";
+  prerr_endline "  pharos sync-gitlab";
   prerr_endline "  pharos today";
   prerr_endline "  pharos today-internal";
   prerr_endline "  pharos detail <request-id>";
@@ -58,6 +59,21 @@ let () =
                 print_json (Runner.source_signal_response_to_yojson response))
           end
       end
+  | [ "sync-gitlab" ] ->
+      with_store (fun store ->
+        match Gitlab_read.config_from_env () with
+        | Error error ->
+            Store.record_source_sync_error store Gitlab_read.source_id error;
+            prerr_endline error;
+            exit 1
+        | Ok config ->
+            begin match Gitlab_read.sync_once store config with
+            | Ok processed ->
+                print_json (`Assoc [ ("processed", `Int processed) ])
+            | Error error ->
+                prerr_endline error;
+                exit 1
+            end)
   | [ "today" ] ->
       with_store (fun store -> print_json (Domain.today_decision_snapshot_to_yojson (Runner.today store)))
   | [ "today-internal" ] ->

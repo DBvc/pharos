@@ -1,0 +1,33 @@
+[
+  {
+    "id": 701,
+    "iid": 7,
+    "project_id": 42,
+    "title": "Review retry policy before release",
+    "state": "opened",
+    "author": {
+      "username": "alice"
+    },
+    "reviewers": [
+      {
+        "username": "dbvc"
+      },
+      {
+        "username": "bob"
+      }
+    ],
+    "web_url": "https://gitlab.example.com/acme/payments/-/merge_requests/7",
+    "updated_at": "2026-07-09T09:30:00Z",
+    "head_pipeline": {
+      "id": 9001,
+      "status": "failed"
+    }
+  },
+  {
+    "iid": "9",
+    "project_id": "acme/minimal",
+    "title": "Minimal optional fields",
+    "state": "opened",
+    "updated_at": "2026-07-09T10:00:00Z"
+  }
+]

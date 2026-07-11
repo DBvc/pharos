@@ -150,6 +150,54 @@ let insert_evidence t (e : evidence_item) =
     bind_text stmt 7 e.created_at;
     step_done stmt)
 
+let latest_evidence_id_by_request_kind t ~request_id ~kind =
+  with_stmt t {|
+    SELECT id
+    FROM evidence_items
+    WHERE request_id = ? AND kind = ?
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  |} (fun stmt ->
+    bind_text stmt 1 request_id;
+    bind_text stmt 2 kind;
+    match S.step stmt with
+    | S.Rc.ROW -> Some (text_col stmt 0)
+    | S.Rc.DONE -> None
+    | rc -> fail_sql "SQLite latest_evidence_id_by_request_kind failed" rc)
+
+let upsert_evidence_by_request_kind t (e : evidence_item) =
+  match latest_evidence_id_by_request_kind t ~request_id:e.request_id ~kind:e.kind with
+  | None -> insert_evidence t e
+  | Some existing_id ->
+      with_stmt t {|
+        UPDATE evidence_items
+        SET title = ?, body = ?, url = ?, created_at = ?
+        WHERE id = ?
+      |} (fun stmt ->
+        bind_text stmt 1 e.title;
+        bind_text stmt 2 e.body;
+        bind_opt_text stmt 3 e.url;
+        bind_text stmt 4 e.created_at;
+        bind_text stmt 5 existing_id;
+        step_done stmt);
+      with_stmt t {|
+        DELETE FROM evidence_items
+        WHERE request_id = ? AND kind = ? AND id <> ?
+      |} (fun stmt ->
+        bind_text stmt 1 e.request_id;
+        bind_text stmt 2 e.kind;
+        bind_text stmt 3 existing_id;
+        step_done stmt)
+
+let delete_evidence_by_request_kind t ~request_id ~kind =
+  with_stmt t {|
+    DELETE FROM evidence_items
+    WHERE request_id = ? AND kind = ?
+  |} (fun stmt ->
+    bind_text stmt 1 request_id;
+    bind_text stmt 2 kind;
+    step_done stmt)
+
 let insert_timeline t (e : timeline_event) =
   with_stmt t {|
     INSERT INTO timeline_events
@@ -500,6 +548,29 @@ let patch_source t id (patch : source_config_patch) =
       } in
       update_source_config t updated;
       get_source t id
+
+let record_source_sync_success t id =
+  let now = Time.now_iso () in
+  with_stmt t {|
+    UPDATE sources
+    SET last_sync_at = ?, last_error = NULL, updated_at = ?
+    WHERE id = ?
+  |} (fun stmt ->
+    bind_text stmt 1 now;
+    bind_text stmt 2 now;
+    bind_text stmt 3 id;
+    step_done stmt)
+
+let record_source_sync_error t id error =
+  with_stmt t {|
+    UPDATE sources
+    SET last_error = ?, updated_at = ?
+    WHERE id = ?
+  |} (fun stmt ->
+    bind_text stmt 1 error;
+    bind_text stmt 2 (Time.now_iso ());
+    bind_text stmt 3 id;
+    step_done stmt)
 
 let has_reviewable_action t request_id =
   with_stmt t "SELECT 1 FROM proposed_actions WHERE request_id = ? AND status = ? LIMIT 1" (fun stmt ->
