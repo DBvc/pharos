@@ -18,6 +18,16 @@ let exec t sql =
   | S.Rc.OK -> ()
   | rc -> fail_sql "SQLite exec failed" rc
 
+let with_transaction t f =
+  exec t "BEGIN IMMEDIATE";
+  try
+    let value = f () in
+    exec t "COMMIT";
+    value
+  with exn ->
+    (try exec t "ROLLBACK" with _ -> ());
+    raise exn
+
 let bind stmt idx data =
   match S.bind stmt idx data with
   | S.Rc.OK -> ()
@@ -269,6 +279,35 @@ let update_request_status t ~request_id ~status =
     bind_text stmt 3 request_id;
     step_done stmt)
 
+let update_work_request_triage t ~request_id ~status ~priority ~risk ~reason
+    ~next_step =
+  with_stmt t {|
+    UPDATE work_requests
+    SET status = ?, priority = ?, risk = ?, reason = ?, next_step = ?, updated_at = ?
+    WHERE id = ?
+  |} (fun stmt ->
+    bind_text stmt 1 (request_status_to_string status);
+    bind_text stmt 2 (priority_to_string priority);
+    bind_text stmt 3 (risk_to_string risk);
+    bind_text stmt 4 reason;
+    bind_text stmt 5 next_step;
+    bind_text stmt 6 (Time.now_iso ());
+    bind_text stmt 7 request_id;
+    step_done stmt)
+
+let update_work_request_skill_error t ~request_id ~reason =
+  with_stmt t {|
+    UPDATE work_requests
+    SET status = ?, reason = ?, next_step = ?, updated_at = ?
+    WHERE id = ?
+  |} (fun stmt ->
+    bind_text stmt 1 (request_status_to_string NeedsContext);
+    bind_text stmt 2 "A built-in skill output failed validation.";
+    bind_text stmt 3 reason;
+    bind_text stmt 4 (Time.now_iso ());
+    bind_text stmt 5 request_id;
+    step_done stmt)
+
 let update_action_status t ~action_id ~status =
   with_stmt t "UPDATE proposed_actions SET status = ?, updated_at = ? WHERE id = ?" (fun stmt ->
     bind_text stmt 1 (action_status_to_string status);
@@ -283,6 +322,25 @@ let update_action_body_status_hash t ~action_id ~body ~payload_hash ~status =
     bind_text stmt 3 (action_status_to_string status);
     bind_text stmt 4 (Time.now_iso ());
     bind_text stmt 5 action_id;
+    step_done stmt)
+
+let update_action_from_skill t (action : proposed_action) =
+  with_stmt t {|
+    UPDATE proposed_actions
+    SET title = ?, body = ?, target_kind = ?, target_ref = ?, risk = ?,
+        requires_approval = ?, status = ?, payload_hash = ?, updated_at = ?
+    WHERE id = ?
+  |} (fun stmt ->
+    bind_text stmt 1 action.title;
+    bind_text stmt 2 action.body;
+    bind_text stmt 3 action.target_kind;
+    bind_text stmt 4 action.target_ref;
+    bind_text stmt 5 (risk_to_string action.risk);
+    bind_bool stmt 6 action.requires_approval;
+    bind_text stmt 7 (action_status_to_string action.status);
+    bind_text stmt 8 action.payload_hash;
+    bind_text stmt 9 action.updated_at;
+    bind_text stmt 10 action.id;
     step_done stmt)
 
 let update_work_request_from_source_signal t ~request_id ~title ~summary ~source_signal_id =
@@ -596,7 +654,7 @@ let list_timeline_by_request t request_id =
     SELECT id, request_id, kind, title, body, created_at
     FROM timeline_events
     WHERE request_id = ?
-    ORDER BY created_at ASC
+    ORDER BY created_at ASC, rowid ASC
   |} (fun stmt ->
     bind_text stmt 1 request_id;
     collect_rows stmt row_to_timeline)
@@ -606,7 +664,7 @@ let get_latest_approval_for_action t action_id =
     SELECT id, action_id, action_hash, decision, approved_body, created_at
     FROM approvals
     WHERE action_id = ? AND decision IN ('approved', 'edited_and_approved')
-    ORDER BY created_at DESC
+    ORDER BY created_at DESC, rowid DESC
     LIMIT 1
   |} (fun stmt ->
     bind_text stmt 1 action_id;

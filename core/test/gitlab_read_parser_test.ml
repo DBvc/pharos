@@ -15,6 +15,15 @@ let expect_option_string label expected actual =
   if expected <> actual then
     failf "%s: unexpected optional string" label
 
+let contains haystack needle =
+  let haystack_len = String.length haystack in
+  let needle_len = String.length needle in
+  let rec loop index =
+    index + needle_len <= haystack_len
+    && (String.sub haystack index needle_len = needle || loop (index + 1))
+  in
+  needle_len = 0 || loop 0
+
 let read_json path = Yojson.Safe.from_file path
 
 let find_fixture_paths () =
@@ -153,6 +162,19 @@ let test_sync_reuses_merge_identity mr_json discussions_json =
       expect_int (kind ^ " snapshot count") 1 (count_kind kind))
       [ "gitlab.mr.metadata"; "gitlab.mr.pipeline";
         "gitlab.mr.discussions" ];
+    let action =
+      match detail.actions with
+      | [ value ] -> value
+      | actions -> failf "expected one GitLab action, got %d" (List.length actions)
+    in
+    expect_string "canonical GitLab target ref" "project_id=42;mr_iid=7"
+      action.target_ref;
+    detail.evidence
+    |> List.filter (fun (item : evidence_item) ->
+      String.starts_with ~prefix:"gitlab.mr." item.kind)
+    |> List.iter (fun (item : evidence_item) ->
+      if not (contains action.body item.id) then
+        failf "GitLab action did not reference rich evidence %s" item.id);
     match Store.get_source store Gitlab_read.source_id with
     | Some source ->
         if source.last_sync_at = None then failf "last_sync_at was not recorded";

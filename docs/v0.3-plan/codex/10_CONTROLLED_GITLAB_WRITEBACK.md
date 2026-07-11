@@ -6,6 +6,9 @@ Branch: `codex/gitlab-controlled-writeback`
 
 Implement approved GitLab comment writeback through core policy only.
 
+Precondition from Task 09: the action is the current proposal, its target ref is canonical,
+and its approval hash still matches after the latest source-evidence refresh.
+
 ## Read first
 
 ```text
@@ -50,6 +53,7 @@ protocol/openapi.yaml
 3. Do not support MR merge or approval.
 4. Do not support Feishu writeback in this task.
 5. Do not execute a GitLab action whose `target_ref` does not match the request's GitLab source identity.
+6. Do not execute an approval retained only as audit history after Task 09 refreshed the action payload.
 
 ## Commands
 

@@ -17,3 +17,7 @@
 (test
  (name gitlab_read_parser_test)
  (libraries pharos_core yojson))
+
+(test
+ (name skill_output_test)
+ (libraries pharos_core yojson))

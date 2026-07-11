@@ -169,6 +169,31 @@ let test_hash_mismatch_blocks_execution () =
     | Ok _ -> failf "execution should fail when approval hash is stale"
     end)
 
+let test_proposed_action_cannot_reuse_matching_historical_approval () =
+  with_store (fun store ->
+    let request = capture store "Do not revive a stale approval" in
+    let action = first_action store request.id in
+    let approved_body = "User-edited payload A" in
+    let approval =
+      Runner.approve ~edited_body:approved_body store action.id |> Result.get_ok
+    in
+    let changed_body = "Generated payload B" in
+    let changed_hash =
+      payload_hash ~target_kind:action.target_kind ~target_ref:action.target_ref
+        ~risk:action.risk ~body:changed_body
+    in
+    Store.update_action_body_status_hash store ~action_id:action.id
+      ~body:changed_body ~payload_hash:changed_hash ~status:ActionProposed;
+    Store.update_action_body_status_hash store ~action_id:action.id
+      ~body:approved_body ~payload_hash:approval.action_hash
+      ~status:ActionProposed;
+    begin match Runner.execute_local store action.id with
+    | Error (Policy.ApprovalRequired id) ->
+        expect_string "proposed action id" action.id id
+    | Error err -> failf "unexpected error: %s" (Policy.error_to_string err)
+    | Ok _ -> failf "proposed action reused a matching historical approval"
+    end)
+
 let test_rejection_blocks_execution () =
   with_store (fun store ->
     let request = capture store "Reject this action" in
@@ -229,6 +254,7 @@ let () =
   test_execution_requires_approval ();
   test_edit_and_approve_updates_hash ();
   test_hash_mismatch_blocks_execution ();
+  test_proposed_action_cannot_reuse_matching_historical_approval ();
   test_rejection_blocks_execution ();
   test_high_risk_actions_block L4;
   test_high_risk_actions_block L5;

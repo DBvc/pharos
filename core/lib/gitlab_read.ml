@@ -517,13 +517,12 @@ let fetch_and_process_merge_request get_json store config listed_mr =
   let* discussions = parse_discussions discussions_json in
   let pipeline_status = fetch_pipeline_status get_json config mr in
   let normalized = normalize ?pipeline_status mr discussions in
-  let response = Runner.ingest_source_signal store normalized.signal in
-  Runner.attach_evidence store ~request_id:response.request.id
-    ~managed_kinds:[
+  ignore (Runner.ingest_source_signal ~evidence:normalized.evidence
+    ~managed_evidence_kinds:[
       "gitlab.mr.metadata";
       "gitlab.mr.pipeline";
       "gitlab.mr.discussions";
-    ] normalized.evidence;
+    ] store normalized.signal);
   Ok ()
 
 let redact_token token message =

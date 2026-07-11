@@ -42,3 +42,42 @@ let next_step =
 
 let local_action_body body =
   "Record this captured request as acknowledged and ready for follow-up:\n\n" ^ compact_body body
+
+let source_reason (signal : source_signal) =
+  match signal.kind with
+  | GitLab -> "You were requested as reviewer."
+  | FeishuChat -> "A chat message appears to need your reply."
+  | FeishuProject -> "A project update appears to need a next step."
+  | FeishuDocs -> "A document comment appears to need your response."
+  | Manual -> entry_reason
+  | UnknownSource kind -> "A " ^ kind ^ " signal was captured for review."
+
+let source_next_step (signal : source_signal) =
+  match signal.kind with
+  | GitLab -> "Prepare a review summary and comment draft."
+  | FeishuChat -> "Review and edit the prepared reply draft."
+  | FeishuProject -> "Review the blocker summary and confirm the owner."
+  | FeishuDocs -> "Review the comment context and prepare a response."
+  | Manual -> next_step
+  | UnknownSource _ -> "Review the prepared local next move."
+
+let request_type (signal : source_signal) =
+  match signal.kind with
+  | GitLab -> "gitlab_mr_review"
+  | FeishuChat -> "feishu_chat_reply"
+  | FeishuProject -> "project_next_step"
+  | FeishuDocs -> "doc_response"
+  | Manual -> "manual_follow_up"
+  | UnknownSource _ -> "source_follow_up"
+
+let request_risk (signal : source_signal) =
+  match signal.kind with
+  | GitLab | FeishuChat -> L1
+  | Manual | FeishuProject | FeishuDocs | UnknownSource _ -> L2
+
+let request_priority (signal : source_signal) =
+  match signal.kind with
+  | Manual -> classify_manual ~body:signal.body
+  | FeishuProject when contains_substring
+      (String.lowercase_ascii signal.body) "blocked" -> High
+  | GitLab | FeishuChat | FeishuProject | FeishuDocs | UnknownSource _ -> Normal

@@ -93,6 +93,10 @@ Today grouping must remain user-facing: Needs Decision, Needs Input, Watching, H
 5. `project_next_step_skill`.
 6. `doc_understanding_skill`.
 
+Task 09 v0 implements the first four deterministic skill contracts. The project-next-step
+and document-understanding ids remain roadmap/deferred until their output contracts are
+specified; do not infer implementations from the names alone.
+
 ### Done criteria
 
 - At least 3 request types automatically reach summary, draft, or suggested action stage.

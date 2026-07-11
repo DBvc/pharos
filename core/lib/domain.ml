@@ -237,6 +237,13 @@ let priority_of_string = function
   | "urgent" -> Urgent
   | _ -> Normal
 
+let priority_of_string_strict = function
+  | "low" -> Ok Low
+  | "normal" -> Ok Normal
+  | "high" -> Ok High
+  | "urgent" -> Ok Urgent
+  | value -> Error ("Invalid priority: " ^ value)
+
 let risk_to_string = function
   | L0 -> "l0"
   | L1 -> "l1"
@@ -253,6 +260,15 @@ let risk_of_string = function
   | "l4" -> L4
   | "l5" -> L5
   | _ -> L1
+
+let risk_of_string_strict = function
+  | "l0" -> Ok L0
+  | "l1" -> Ok L1
+  | "l2" -> Ok L2
+  | "l3" -> Ok L3
+  | "l4" -> Ok L4
+  | "l5" -> Ok L5
+  | value -> Error ("Invalid risk: " ^ value)
 
 let action_status_to_string = function
   | ActionProposed -> "proposed"

@@ -8,6 +8,11 @@ Add the first real external writeback path: approved GitLab MR/Issue comment. Th
 
 ## Required safety path
 
+Task 09 is a hard prerequisite. It must produce a current GitLab MR action with canonical
+`target_ref = project_id=<id>;mr_iid=<iid>`, and proposal freshness must ensure that only an
+approval whose hash matches the current action payload can reach this path. An approval
+retained for audit after source evidence refresh is not executable authority.
+
 External writeback must flow through this shape:
 
 ```text
@@ -73,6 +78,8 @@ Before calling GitLab write API:
 4. Action risk L3 requires approval.
 5. Latest approval exists.
 6. Approval hash matches current action payload hash.
+   The request/action must also still represent the current proposal after the latest source
+   evidence refresh; a stale audit approval is rejected even if it remains stored.
 7. `target_kind` is in allowlist:
 
 ```text

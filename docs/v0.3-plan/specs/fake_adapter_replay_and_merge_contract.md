@@ -155,6 +155,19 @@ title: Source signal merged into existing request
 body: signal_id=<signal_id>; identity_key=<identity_key>
 ```
 
+Task 06 defines merge identity before source-specific proposed actions exist. Once Task 09
+adds built-in skills, the same merge path must also apply the Task 09 proposal freshness
+contract after all bounded evidence is persisted:
+
+1. keep one current proposal for the active request;
+2. recompute from the latest material source context;
+3. preserve an existing approval when the generated executable payload is unchanged;
+4. refresh the current action and require approval again when body, target, risk, or payload
+   hash changes;
+5. keep the old approval as audit history, but never let it authorize the refreshed hash.
+
+This extension must preserve the same-request and one-active-card guarantees above.
+
 ## Fixture requirements
 
 Add or normalize fixtures:

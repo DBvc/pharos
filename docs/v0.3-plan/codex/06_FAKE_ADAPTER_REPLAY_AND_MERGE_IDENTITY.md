@@ -53,6 +53,10 @@ protocol/openapi.yaml
 3. Do not skip source signal insertion on merge; each external event should still be traceable.
 4. Do not include mutable title/subject in the primary identity key when `external_id` exists.
 
+Task 09 extension: after built-in actions exist, this identity path also owns proposal
+freshness. It must still keep one active request/card while allowing Task 09 to refresh the
+single current proposal under the rules in `specs/skills_v0_contract.md`.
+
 ## Commands
 
 ```bash

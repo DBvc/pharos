@@ -84,11 +84,13 @@ let reject store action_id =
 
 let verify_approval store action =
   if action.requires_approval || risk_requires_approval action.risk then
-    match Store.get_latest_approval_for_action store action.id with
-    | None -> Error (ApprovalRequired action.id)
-    | Some approval ->
-        if approval.action_hash = action.payload_hash then Ok approval
-        else Error (ApprovalHashMismatch { action_hash = action.payload_hash; approval_hash = approval.action_hash })
+    if action.status <> ActionApproved then Error (ApprovalRequired action.id)
+    else
+      match Store.get_latest_approval_for_action store action.id with
+      | None -> Error (ApprovalRequired action.id)
+      | Some approval ->
+          if approval.action_hash = action.payload_hash then Ok approval
+          else Error (ApprovalHashMismatch { action_hash = action.payload_hash; approval_hash = approval.action_hash })
   else
     let synthetic = {
       id = "synthetic_no_approval_required";
