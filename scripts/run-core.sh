@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+: "${PHAROS_CAPABILITY_TOKEN:?Set PHAROS_CAPABILITY_TOKEN to a runtime-only value before starting pharosd}"
+if [[ ! "$PHAROS_CAPABILITY_TOKEN" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "PHAROS_CAPABILITY_TOKEN must be exactly 64 lowercase hexadecimal characters" >&2
+  exit 2
+fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mkdir -p "$ROOT/var"
 cd "$ROOT/core"

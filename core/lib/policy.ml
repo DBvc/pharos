@@ -6,6 +6,11 @@ type policy_error =
   | RiskNotExecutableInMvp of risk
   | ApprovalRequired of string
   | ApprovalHashMismatch of { action_hash : string; approval_hash : string }
+  | StaleAction of {
+      action_id : string;
+      expected_hash : string;
+      actual_hash : string;
+    }
   | ExternalWritebackNotImplemented of string
   | RejectedAction of string
 
@@ -16,6 +21,9 @@ let error_to_string = function
   | ApprovalRequired id -> "Approval required for action: " ^ id
   | ApprovalHashMismatch { action_hash; approval_hash } ->
       Printf.sprintf "Approval hash mismatch. action=%s approval=%s" action_hash approval_hash
+  | StaleAction { action_id; expected_hash; actual_hash } ->
+      Printf.sprintf "Stale action revision. action=%s expected=%s actual=%s"
+        action_id expected_hash actual_hash
   | ExternalWritebackNotImplemented target -> "External writeback is not implemented in starter: " ^ target
   | RejectedAction id -> "Action has been rejected: " ^ id
 
@@ -29,58 +37,99 @@ let timeline ~request_id ~kind ~title ~body =
     created_at = Time.now_iso ();
   }
 
-let approve ?edited_body store action_id =
-  match Store.get_action store action_id with
-  | None -> Error (ActionNotFound action_id)
-  | Some action ->
-      if not (risk_is_executable_in_mvp action.risk) then Error (RiskNotExecutableInMvp action.risk)
-      else if action.status = ActionRejected then Error (RejectedAction action_id)
-      else
-        let body = Option.value edited_body ~default:action.body in
-        let decision = match edited_body with None -> ApprovedDecision | Some _ -> EditedAndApprovedDecision in
-        let hash = payload_hash ~target_kind:action.target_kind ~target_ref:action.target_ref ~risk:action.risk ~body in
-        let now = Time.now_iso () in
-        Store.update_action_body_status_hash store ~action_id ~body ~payload_hash:hash ~status:ActionApproved;
-        let approval = {
-          id = Ids.create "appr";
-          action_id;
-          action_hash = hash;
-          decision;
-          approved_body = Some body;
-          created_at = now;
-        } in
-        Store.insert_approval store approval;
-        Store.update_request_status store ~request_id:action.request_id ~status:Approved;
-        Store.insert_timeline store (timeline
-          ~request_id:action.request_id
-          ~kind:"approval"
-          ~title:(match decision with ApprovedDecision -> "Action approved" | EditedAndApprovedDecision -> "Action edited and approved" | RejectedDecision -> "Action rejected")
-          ~body:("Approval " ^ approval.id ^ " is bound to hash " ^ hash));
-        Store.bump_metric store (match decision with ApprovedDecision -> "approvals" | EditedAndApprovedDecision -> "edit_approvals" | RejectedDecision -> "rejects");
-        Ok approval
+let stale_if_revision_changed action ~expected_payload_hash =
+  if action.status <> ActionProposed || action.payload_hash <> expected_payload_hash then
+    Error
+      (StaleAction
+         {
+           action_id = action.id;
+           expected_hash = expected_payload_hash;
+           actual_hash = action.payload_hash;
+         })
+  else Ok ()
 
-let reject store action_id =
-  match Store.get_action store action_id with
-  | None -> Error (ActionNotFound action_id)
-  | Some action ->
-      Store.update_action_status store ~action_id ~status:ActionRejected;
-      Store.update_request_status store ~request_id:action.request_id ~status:Archived;
-      let approval = {
-        id = Ids.create "appr";
-        action_id;
-        action_hash = action.payload_hash;
-        decision = RejectedDecision;
-        approved_body = None;
-        created_at = Time.now_iso ();
-      } in
-      Store.insert_approval store approval;
-      Store.insert_timeline store (timeline
-        ~request_id:action.request_id
-        ~kind:"review"
-        ~title:"Action rejected"
-        ~body:("Rejected action " ^ action_id));
-      Store.bump_metric store "rejects";
-      Ok approval
+let approve ?edited_body ~expected_payload_hash store action_id =
+  Store.with_transaction store (fun () ->
+    match Store.get_action store action_id with
+    | None -> Error (ActionNotFound action_id)
+    | Some action ->
+        begin match stale_if_revision_changed action ~expected_payload_hash with
+        | Error _ as error -> error
+        | Ok () ->
+            if not (risk_is_executable_in_mvp action.risk) then
+              Error (RiskNotExecutableInMvp action.risk)
+            else
+              let body = Option.value edited_body ~default:action.body in
+              let decision =
+                match edited_body with
+                | None -> ApprovedDecision
+                | Some _ -> EditedAndApprovedDecision
+              in
+              let hash =
+                payload_hash ~target_kind:action.target_kind
+                  ~target_ref:action.target_ref ~risk:action.risk ~body
+              in
+              let now = Time.now_iso () in
+              Store.update_action_body_status_hash store ~action_id ~body
+                ~payload_hash:hash ~status:ActionApproved;
+              let approval =
+                {
+                  id = Ids.create "appr";
+                  action_id;
+                  action_hash = hash;
+                  decision;
+                  approved_body = Some body;
+                  created_at = now;
+                }
+              in
+              Store.insert_approval store approval;
+              Store.update_request_status store ~request_id:action.request_id
+                ~status:Approved;
+              Store.insert_timeline store
+                (timeline ~request_id:action.request_id ~kind:"approval"
+                   ~title:
+                     (match decision with
+                     | ApprovedDecision -> "Action approved"
+                     | EditedAndApprovedDecision -> "Action edited and approved"
+                     | RejectedDecision -> "Action rejected")
+                   ~body:("Approval " ^ approval.id ^ " is bound to hash " ^ hash));
+              Store.bump_metric store
+                (match decision with
+                | ApprovedDecision -> "approvals"
+                | EditedAndApprovedDecision -> "edit_approvals"
+                | RejectedDecision -> "rejects");
+              Ok approval
+        end)
+
+let reject ~expected_payload_hash store action_id =
+  Store.with_transaction store (fun () ->
+    match Store.get_action store action_id with
+    | None -> Error (ActionNotFound action_id)
+    | Some action ->
+        begin match stale_if_revision_changed action ~expected_payload_hash with
+        | Error _ as error -> error
+        | Ok () ->
+            Store.update_action_status store ~action_id ~status:ActionRejected;
+            Store.update_request_status store ~request_id:action.request_id
+              ~status:Archived;
+            let approval =
+              {
+                id = Ids.create "appr";
+                action_id;
+                action_hash = action.payload_hash;
+                decision = RejectedDecision;
+                approved_body = None;
+                created_at = Time.now_iso ();
+              }
+            in
+            Store.insert_approval store approval;
+            Store.insert_timeline store
+              (timeline ~request_id:action.request_id ~kind:"review"
+                 ~title:"Action rejected"
+                 ~body:("Rejected action " ^ action_id));
+            Store.bump_metric store "rejects";
+            Ok approval
+        end)
 
 let verify_approval store action =
   if action.requires_approval || risk_requires_approval action.risk then

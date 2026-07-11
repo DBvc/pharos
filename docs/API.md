@@ -1,12 +1,38 @@
-# Local API Draft
+# Local API
 
-The first transport is localhost HTTP for developer speed. Later versions should move to Unix domain socket and a local capability token.
+The v0.3 transport is loopback HTTP. `pharosd` refuses any `--host` other than
+`127.0.0.1` or `::1`.
+
+The bundled Swift app uses `127.0.0.1`; the `::1` bind is available for custom
+CLI or curl use and is not a second Swift endpoint.
 
 Base URL:
 
 ```text
 http://127.0.0.1:8765
 ```
+
+## Capability authentication
+
+Set the same `PHAROS_CAPABILITY_TOKEN` in the daemon and Swift app environment.
+It must be exactly 64 lowercase hexadecimal characters. Every `/v0/*` route
+requires:
+
+```text
+Authorization: Bearer <runtime capability>
+```
+
+Missing or malformed daemon configuration stops startup before SQLite is
+opened. A missing header or invalid caller capability returns HTTP 401 with
+`{"error":"unauthorized"}` before the route handler runs. `/health` is the only
+public route. Capability and GitLab credentials are environment-managed runtime
+values and must not be persisted, exported, included in examples, or logged.
+
+The revision-bound review request body is an intentional breaking change inside
+the unreleased v0.3 starter. `pharosd`, the bundled Swift client, and the CLI
+must be upgraded together. Empty approve/reject POSTs and the old one-argument
+CLI approve command are not supported because they cannot prove which action
+revision the user reviewed.
 
 ## GET /health
 
@@ -160,8 +186,7 @@ a GitLab write endpoint.
 pharos sync-gitlab
 ```
 
-The daemon does not expose a GitLab sync route until the local API has a
-capability-token transport.
+The daemon does not expose a GitLab sync route in v0.3.
 
 ## GET /v0/today
 
@@ -215,22 +240,56 @@ Response shape:
 
 ## POST /v0/actions/:id/approve
 
-Approves the current action body.
+Request:
+
+```json
+{"expected_payload_hash":"payload-hash-shown-to-the-user"}
+```
+
+Approves only the current proposed action revision.
 
 ## POST /v0/actions/:id/edit-and-approve
 
 Request:
 
 ```json
-{"body":"Edited body to execute"}
+{
+  "body":"Edited body to execute",
+  "expected_payload_hash":"payload-hash-shown-to-the-user"
+}
 ```
 
-Approves the edited body. The core updates the action hash and creates an approval bound to that hash.
+Approves the edited body only if the displayed revision is still current. The
+core updates the action hash and creates an approval bound to the new hash.
 
 ## POST /v0/actions/:id/reject
 
-Rejects the action and records a timeline event.
+Request:
+
+```json
+{"expected_payload_hash":"payload-hash-shown-to-the-user"}
+```
+
+Rejects only the current proposed action revision and records a timeline event.
+
+For approve, edit-and-approve, and reject, the hash comparison, action/request
+status changes, approval decision, timeline, and metric are one SQLite
+transaction. A changed hash or no-longer-proposed action returns HTTP 409 with
+`{"error":"stale_action"}` and records no decision side effect. Clients must
+refresh the request detail and ask the user to review again.
+
+`expected_payload_hash` is an opaque revision value returned by the API. Clients
+must echo the displayed value and must not infer or recompute its algorithm.
 
 ## POST /v0/actions/:id/execute-local
 
 Executes a local Pharos action after policy verification. External writeback routes will be added in Milestone 3.
+
+## Review CLI
+
+Direct local CLI review commands also require the hash displayed to the caller:
+
+```bash
+pharos approve <action-id> <expected-payload-hash>
+pharos reject <action-id> <expected-payload-hash>
+```

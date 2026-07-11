@@ -13,7 +13,8 @@ let usage () =
   prerr_endline "  pharos today";
   prerr_endline "  pharos today-internal";
   prerr_endline "  pharos detail <request-id>";
-  prerr_endline "  pharos approve <action-id>";
+  prerr_endline "  pharos approve <action-id> <expected-payload-hash>";
+  prerr_endline "  pharos reject <action-id> <expected-payload-hash>";
   prerr_endline "  pharos execute-local <action-id>";
   exit 2
 
@@ -83,9 +84,14 @@ let () =
         match Runner.get_detail store id with
         | None -> prerr_endline ("Request not found: " ^ id); exit 1
         | Some detail -> print_json (Domain.request_detail_to_yojson detail))
-  | [ "approve"; id ] ->
+  | [ "approve"; id; expected_payload_hash ] ->
       with_store (fun store ->
-        match Runner.approve store id with
+        match Runner.approve ~expected_payload_hash store id with
+        | Ok approval -> print_json (Domain.approval_to_yojson approval)
+        | Error err -> prerr_endline (Policy.error_to_string err); exit 1)
+  | [ "reject"; id; expected_payload_hash ] ->
+      with_store (fun store ->
+        match Runner.reject ~expected_payload_hash store id with
         | Ok approval -> print_json (Domain.approval_to_yojson approval)
         | Error err -> prerr_endline (Policy.error_to_string err); exit 1)
   | [ "execute-local"; id ] ->

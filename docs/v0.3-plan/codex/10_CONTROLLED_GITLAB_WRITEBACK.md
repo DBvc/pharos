@@ -1,83 +1,92 @@
-# Task 10: Controlled GitLab writeback
+# Task 10: Authenticated and durable GitLab writeback
 
-Branch: `codex/gitlab-controlled-writeback`
-
-## Goal
-
-Implement approved GitLab comment writeback through core policy only.
-
-Precondition from Task 09: the action is the current proposal, its target ref is canonical,
-and its approval hash still matches after the latest source-evidence refresh.
+Task 10 is executed as two review-gated slices. Do not combine them.
 
 ## Read first
 
 ```text
 specs/controlled_writeback_contract.md
-```
-
-## Files to change
-
-```text
-core/lib/policy.ml
-core/lib/store.ml
-core/lib/domain.ml
-core/lib/gitlab_write.ml or core/lib/adapters/gitlab_write.ml
-core/bin/daemon/main.ml
-core/bin/cli/main.ml
-core/test/gitlab_writeback_policy_test.ml
-ui/macos/PharosApp/Sources/PharosApp/Core/APIClient.swift
-ui/macos/PharosApp/Sources/PharosApp/Core/AppState.swift
-ui/macos/PharosApp/Sources/PharosApp/Views/RequestDetailView.swift
+docs/DECISIONS.md (ADR-003)
 docs/API.md
-protocol/openapi.yaml
 ```
 
-## Exact implementation steps
+## Task 10a: local auth and approval CAS
 
-1. Add `POST /v0/actions/:id/execute-approved`.
-2. Add policy function that re-reads action and latest approval.
-3. Check hash match, risk, target allowlist, body length, GitLab source write permission, and target provenance.
-4. Add GitLab target ref parser.
-5. Add fake GitLab client for tests.
-6. Add real GitLab client for manual dev only.
-7. On success, update action status and request status.
-8. Insert writeback timeline event.
-9. Insert writeback evidence item.
-10. Swift: external targets use `execute-approved`, not `execute-local`.
-11. Local targets may continue using `execute-local` or may also use `execute-approved` if core supports both.
+### Goal
 
-## Do not change
+Close the local API surface and ensure a decision can apply only to the
+exact action revision the user reviewed.
 
-1. Do not call GitLab directly from Swift.
-2. Do not execute unapproved L3 actions.
-3. Do not support MR merge or approval.
-4. Do not support Feishu writeback in this task.
-5. Do not execute a GitLab action whose `target_ref` does not match the request's GitLab source identity.
-6. Do not execute an approval retained only as audit history after Task 09 refreshed the action payload.
+### Implementation
 
-## Commands
+1. Reject daemon startup unless host is exactly `127.0.0.1` or `::1`.
+2. Require `PHAROS_CAPABILITY_TOKEN` to be exactly 64 lowercase hexadecimal
+   characters and validate it before opening SQLite.
+3. Keep only `/health` public and protect every registered `/v0/*` route with
+   fixed-time Bearer validation.
+4. Require `expected_payload_hash` for approve/edit/reject API and CLI calls.
+5. In one transaction, re-read action id/status/hash and apply the complete
+   review decision only when it is still current.
+6. Return HTTP 409 `stale_action` with no decision side effect on mismatch.
+7. Swift carries the capability on every request, fails before transport when
+   it is missing or malformed, carries the displayed hash, refreshes on stale,
+   and does not execute after stale approval.
+8. Align ADR, API, OpenAPI, tests, and this Task 10 contract.
+
+### Acceptance
 
 ```bash
-cd core && dune build && dune runtest
+cd core && dune build
+cd core && dune runtest
 swift build --package-path ui/macos/PharosApp
 ```
 
-## Acceptance
+Tests must prove loopback/config validation, public health, every `/v0` route's
+401 behavior, H1-to-H2 stale decisions, status CAS, and transaction rollback.
 
-1. Unapproved GitLab comment action is blocked.
-2. Edited approval posts edited body to fake client in tests.
-3. Hash mismatch blocks.
-4. Write permission off blocks.
-5. Target provenance mismatch blocks before fake GitLab client is called.
-6. Successful fake writeback records timeline and evidence.
-7. Swift calls only core API for execution.
+### Stop line
 
-## Final response format
+Do not add `execute-approved`, a GitLab write client, writeback-attempt schema,
+or delivery/reconciliation code in Task 10a.
 
-```text
-Changed files:
-Tests run:
-Swift build:
-Safety acceptance:
-Known follow-up:
+## Task 10b: durable GitLab comment delivery
+
+### Goal
+
+Implement approved GitLab MR/Issue comment delivery with durable attempt state,
+unknown-result safety, marker reconciliation, and explicit abandon.
+
+### Implementation
+
+1. Add typed/persisted `writeback_attempts` states from the contract.
+2. Add policy preflight that re-reads action, latest approval, request, source
+   identity, and source settings and validates hash/risk/allowlist/body/target.
+3. Atomically create one active prepared attempt before network work.
+4. Run the GitLab client outside SQLite transactions and Dream's event loop.
+5. Classify only pre-spawn certainty as `failed_before_send`; all ambiguous
+   post-start outcomes become `unknown`.
+6. Confirm successful delivery with external id/url, timeline, evidence, and
+   metric.
+7. Reconcile unknown attempts through exact stable-marker matching with bounded
+   GitLab Notes pagination.
+8. Add capability-authenticated explicit abandon; require fresh review and
+   approval afterward.
+9. Add Swift attempt state and core execution UI without direct GitLab calls.
+
+### Acceptance
+
+```bash
+cd core && dune build
+cd core && dune runtest
+swift build --package-path ui/macos/PharosApp
 ```
+
+Fake tests must prove every policy negative calls the client zero times,
+confirmed delivery, response-loss unknown, crash recovery, reconciliation,
+unknown no-second-POST, abandon plus fresh approval, and health responsiveness
+during a slow client.
+
+### Non-goals
+
+No automatic retry, generic queue, Feishu writeback, MR merge/approval, or
+commit creation.

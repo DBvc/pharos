@@ -54,11 +54,16 @@ val today_internal : Store.t -> Domain.today_snapshot
 
 val approve :
   ?edited_body:string ->
+  expected_payload_hash:string ->
   Store.t ->
   string ->
   (Domain.approval, Policy.policy_error) result
 
-val reject : Store.t -> string -> (Domain.approval, Policy.policy_error) result
+val reject :
+  expected_payload_hash:string ->
+  Store.t ->
+  string ->
+  (Domain.approval, Policy.policy_error) result
 
 val execute_local :
   Store.t ->

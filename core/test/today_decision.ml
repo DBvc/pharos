@@ -56,7 +56,10 @@ let () =
         (card_debug_status review_card);
 
       let action = first_action store review_request.id in
-      ignore (Result.get_ok (Runner.approve store action.id));
+      ignore
+        (Result.get_ok
+           (Runner.approve ~expected_payload_hash:action.payload_hash store
+              action.id));
       ignore (Result.get_ok (Runner.execute_local store action.id));
       let today_after_execute = Runner.today store in
       expect_int "needs_decision after execute" 0
@@ -71,7 +74,11 @@ let () =
 
       let rejected_request = capture store "Reject this noisy follow-up" in
       let rejected_action = first_action store rejected_request.id in
-      ignore (Result.get_ok (Runner.reject store rejected_action.id));
+      ignore
+        (Result.get_ok
+           (Runner.reject
+              ~expected_payload_hash:rejected_action.payload_hash store
+              rejected_action.id));
       let today_after_reject = Runner.today store in
       expect_int "noise count after reject" 1 today_after_reject.noise.count;
       if

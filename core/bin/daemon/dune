@@ -1,4 +1,11 @@
+(library
+ (name pharos_daemon_app)
+ (wrapped false)
+ (modules app)
+ (libraries pharos_core dream yojson lwt))
+
 (executable
  (public_name pharosd)
  (name main)
- (libraries pharos_core dream yojson lwt))
+ (modules main)
+ (libraries pharos_core pharos_daemon_app dream))

@@ -116,7 +116,8 @@ let test_noop_replay_preserves_approval_but_changed_payload_invalidates_it () =
     let initial_action = first_action (detail store first.request.id) in
     let approved_body = "User-edited approved MR comment" in
     let approval =
-      Runner.approve ~edited_body:approved_body store initial_action.id
+      Runner.approve ~edited_body:approved_body
+        ~expected_payload_hash:initial_action.payload_hash store initial_action.id
       |> Result.get_ok
     in
     let approved_action = Option.get (Store.get_action store initial_action.id) in

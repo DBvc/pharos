@@ -77,7 +77,7 @@ Steps:
 1. Capture manual request.
 2. Get first action.
 3. Save old payload hash.
-4. Call `Runner.approve ~edited_body:"edited body"`.
+4. Call `Runner.approve ~edited_body:"edited body" ~expected_payload_hash:action.payload_hash`.
 5. Reload action.
 6. Assert body = `edited body`.
 7. Assert payload hash changed.

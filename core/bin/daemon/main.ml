@@ -1,7 +1,5 @@
 open Pharos_core
 
-let ( >>= ) = Lwt.bind
-
 let getenv_default name default =
   match Sys.getenv_opt name with Some value -> value | None -> default
 
@@ -13,155 +11,26 @@ let rec parse_args args db host port =
   | "--port" :: value :: rest -> parse_args rest db host (int_of_string value)
   | _ :: rest -> parse_args rest db host port
 
-let json value = Dream.json (Yojson.Safe.to_string value)
-
-let error_response ?(status=`Bad_Request) message =
-  Dream.json ~status (Yojson.Safe.to_string (`Assoc [ ("error", `String message) ]))
-
-let capture store req =
-  Dream.body req >>= fun body ->
-  match Yojson.Safe.from_string body with
-  | exception Yojson.Json_error e -> error_response ("Invalid JSON: " ^ e)
-  | payload ->
-      match Runner.capture_input_of_json payload with
-      | Error e -> error_response e
-      | Ok input ->
-          let request = Runner.capture_manual store input in
-          json (`Assoc [
-            ("request", Domain.work_request_to_yojson request);
-            ("detail_url", `String ("/v0/requests/" ^ request.id));
-          ])
-
-let source_signal store req =
-  Dream.body req >>= fun body ->
-  match Yojson.Safe.from_string body with
-  | exception Yojson.Json_error e -> error_response ("Invalid JSON: " ^ e)
-  | payload ->
-      match Runner.source_signal_input_of_json payload with
-      | Error e -> error_response e
-      | Ok input ->
-          let response = Runner.ingest_source_signal store input in
-          json (Runner.source_signal_response_to_yojson response)
-
-let optional_bool name json =
-  match Yojson.Safe.Util.member name json with
-  | `Null -> Ok None
-  | `Bool value -> Ok (Some value)
-  | _ -> Error ("Expected boolean field: " ^ name)
-
-let optional_string name json =
-  match Yojson.Safe.Util.member name json with
-  | `Null -> Ok None
-  | `String value -> Ok (Some value)
-  | _ -> Error ("Expected string field: " ^ name)
-
-let contains_substring value needle =
-  let value = String.lowercase_ascii value in
-  let needle = String.lowercase_ascii needle in
-  let value_len = String.length value in
-  let needle_len = String.length needle in
-  let rec loop index =
-    index + needle_len <= value_len
-    && (String.sub value index needle_len = needle || loop (index + 1))
-  in
-  needle_len = 0 || loop 0
-
-let scope_contains_credential value =
-  List.exists (contains_substring value)
-    [ "token"; "secret"; "password"; "authorization"; "bearer" ]
-
-let source_patch_of_json json =
-  match optional_bool "enabled" json with
-  | Error e -> Error e
-  | Ok enabled ->
-      match optional_bool "read_enabled" json with
-      | Error e -> Error e
-      | Ok read_enabled ->
-          match optional_bool "write_enabled" json with
-          | Error e -> Error e
-          | Ok write_enabled ->
-              match optional_string "scope_json" json with
-              | Error e -> Error e
-              | Ok (Some value) when scope_contains_credential value ->
-                  Error "scope_json must not contain credential-like keys"
-              | Ok scope_json ->
-                  Ok Domain.{ enabled; read_enabled; write_enabled; scope_json }
-
-let list_sources store _req =
-  json (Domain.sources_response_to_yojson (Store.list_sources store))
-
-let patch_source store req =
-  let id = Dream.param req "id" in
-  Dream.body req >>= fun body ->
-  match Yojson.Safe.from_string body with
-  | exception Yojson.Json_error e -> error_response ("Invalid JSON: " ^ e)
-  | payload ->
-      match source_patch_of_json payload with
-      | Error e -> error_response e
-      | Ok patch ->
-          match Store.patch_source store id patch with
-          | None -> error_response ~status:`Not_Found ("Source not found: " ^ id)
-          | Some source -> json (Domain.source_response_to_yojson source)
-
-let get_request store req =
-  let id = Dream.param req "id" in
-  match Runner.get_detail store id with
-  | None -> error_response ~status:`Not_Found ("Request not found: " ^ id)
-  | Some detail -> json (Domain.request_detail_to_yojson detail)
-
-let approve store req =
-  let id = Dream.param req "id" in
-  match Runner.approve store id with
-  | Ok approval -> json (`Assoc [ ("approval", Domain.approval_to_yojson approval) ])
-  | Error err -> error_response (Policy.error_to_string err)
-
-let edit_and_approve store req =
-  let id = Dream.param req "id" in
-  Dream.body req >>= fun body ->
-  match Yojson.Safe.from_string body with
-  | exception Yojson.Json_error e -> error_response ("Invalid JSON: " ^ e)
-  | payload ->
-      begin match Json_util.required_string "body" payload with
-      | Error e -> error_response e
-      | Ok edited_body ->
-          match Runner.approve ~edited_body store id with
-          | Ok approval -> json (`Assoc [ ("approval", Domain.approval_to_yojson approval) ])
-          | Error err -> error_response (Policy.error_to_string err)
-      end
-
-let reject store req =
-  let id = Dream.param req "id" in
-  match Runner.reject store id with
-  | Ok approval -> json (`Assoc [ ("approval", Domain.approval_to_yojson approval) ])
-  | Error err -> error_response (Policy.error_to_string err)
-
-let execute_local store req =
-  let id = Dream.param req "id" in
-  match Runner.execute_local store id with
-  | Ok action -> json (`Assoc [ ("action", Domain.proposed_action_to_yojson action) ])
-  | Error err -> error_response (Policy.error_to_string err)
-
-let routes store =
-  Dream.router [
-    Dream.get "/health" (fun _ -> json (`Assoc [ ("ok", `Bool true); ("service", `String "pharosd") ]));
-    Dream.post "/v0/capture" (capture store);
-    Dream.post "/v0/source-signals" (source_signal store);
-    Dream.get "/v0/sources" (list_sources store);
-    Dream.patch "/v0/sources/:id" (patch_source store);
-    Dream.get "/v0/today" (fun _ -> json (Domain.today_decision_snapshot_to_yojson (Runner.today store)));
-    Dream.get "/v0/debug/today-internal" (fun _ -> json (Domain.today_snapshot_to_yojson (Runner.today_internal store)));
-    Dream.get "/v0/requests/:id" (get_request store);
-    Dream.post "/v0/actions/:id/approve" (approve store);
-    Dream.post "/v0/actions/:id/edit-and-approve" (edit_and_approve store);
-    Dream.post "/v0/actions/:id/reject" (reject store);
-    Dream.post "/v0/actions/:id/execute-local" (execute_local store);
-  ]
-
 let () =
   let default_db = getenv_default "PHAROS_DB" "../var/pharos.dev.sqlite" in
   let default_host = getenv_default "PHAROS_HOST" "127.0.0.1" in
   let default_port = getenv_default "PHAROS_PORT" "8765" |> int_of_string in
-  let db_path, host, port = parse_args (List.tl (Array.to_list Sys.argv)) default_db default_host default_port in
+  let db_path, host, port =
+    parse_args (List.tl (Array.to_list Sys.argv)) default_db default_host
+      default_port
+  in
+  if not (Capability.is_loopback_host host) then begin
+    prerr_endline "pharosd refuses non-loopback --host; use 127.0.0.1 or ::1";
+    exit 2
+  end;
+  let capability_token =
+    match Option.bind (Sys.getenv_opt "PHAROS_CAPABILITY_TOKEN") Capability.valid_token with
+    | Some token -> token
+    | None ->
+        prerr_endline
+          "pharosd requires a valid PHAROS_CAPABILITY_TOKEN before startup";
+        exit 2
+  in
   let store = Store.connect db_path in
   Printf.printf "pharosd listening on http://%s:%d\n%!" host port;
-  Dream.run ~interface:host ~port (routes store)
+  Dream.run ~interface:host ~port (App.routes store capability_token)

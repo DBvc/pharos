@@ -61,41 +61,68 @@ final class AppState: ObservableObject {
 
     func approve(_ action: ProposedAction, executeAfterApproval: Bool = true) async {
         do {
-            _ = try await api.approve(actionId: action.id)
+            _ = try await api.approve(
+                actionId: action.id,
+                expectedPayloadHash: action.payloadHash
+            )
             if executeAfterApproval {
                 _ = try await api.executeLocal(actionId: action.id)
             }
             await refreshCurrent()
         } catch {
-            errorMessage = readable(error)
+            await handleActionMutationError(error)
         }
     }
 
     func editAndApprove(_ action: ProposedAction, body: String, executeAfterApproval: Bool = true) async {
         do {
-            _ = try await api.editAndApprove(actionId: action.id, body: body)
+            _ = try await api.editAndApprove(
+                actionId: action.id,
+                body: body,
+                expectedPayloadHash: action.payloadHash
+            )
             if executeAfterApproval {
                 _ = try await api.executeLocal(actionId: action.id)
             }
             await refreshCurrent()
         } catch {
-            errorMessage = readable(error)
+            await handleActionMutationError(error)
         }
     }
 
     func reject(_ action: ProposedAction) async {
         do {
-            _ = try await api.reject(actionId: action.id)
+            _ = try await api.reject(
+                actionId: action.id,
+                expectedPayloadHash: action.payloadHash
+            )
             await refreshCurrent()
         } catch {
-            errorMessage = readable(error)
+            await handleActionMutationError(error)
         }
     }
 
-    private func refreshCurrent() async {
+    @discardableResult
+    private func refreshCurrent() async -> Bool {
         await refreshToday()
+        guard errorMessage == nil else { return false }
         if let selectedRequestId {
             await loadDetail(id: selectedRequestId)
+            return errorMessage == nil
+        }
+        return true
+    }
+
+    private func handleActionMutationError(_ error: Error) async {
+        guard let apiError = error as? APIErrorResponse,
+              apiError.error == "stale_action" else {
+            errorMessage = readable(error)
+            return
+        }
+        if await refreshCurrent() {
+            errorMessage = "This draft changed. Review the refreshed action before deciding."
+        } else {
+            selectedDetail = nil
         }
     }
 

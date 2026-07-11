@@ -14,9 +14,11 @@ Reason: Pharos is macOS-first and needs menu bar, notifications, local lifecycle
 
 ## ADR-003: Local HTTP first, Unix socket later
 
-Status: accepted for M0.
+Status: accepted for v0.3 with a local capability boundary.
 
-Reason: localhost HTTP is faster for early testing and easy for CLI, curl, and SwiftUI. It should be replaced or wrapped with Unix domain socket plus capability token before real source credentials and writeback are enabled.
+Reason: local HTTP remains convenient for CLI, curl, and SwiftUI, but localhost alone is not caller authentication. In v0.3, `pharosd` accepts only the exact loopback hosts `127.0.0.1` and `::1`. `PHAROS_CAPABILITY_TOKEN` must be exactly 64 lowercase hexadecimal characters and is validated before SQLite is opened. `/health` is public; every `/v0/*` route requires its Bearer capability and uses fixed-time token comparison.
+
+The v0.3 boundary protects against non-loopback exposure, unauthenticated network calls, browser or accidental local calls, and other OS users. It does not claim to protect against malicious software that already controls the same user account or process environment. Capability and source tokens must never enter SQLite, timeline, metrics, exports, examples, snapshots, or logs. A Unix domain socket plus Keychain-managed lifecycle remains the later hardening path.
 
 ## ADR-004: SQLite first
 

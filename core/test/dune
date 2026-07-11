@@ -21,3 +21,8 @@
 (test
  (name skill_output_test)
  (libraries pharos_core yojson))
+
+(test
+ (name daemon_auth_test)
+ (libraries pharos_core pharos_daemon_app dream lwt.unix unix)
+ (deps ../bin/daemon/main.exe))

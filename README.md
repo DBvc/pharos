@@ -54,36 +54,63 @@ eval $(opam env)
 dune build
 ```
 
-Start the local daemon:
+Return to the repository root, create an ephemeral capability, and run the
+daemon and Swift app from the same shell environment:
 
 ```bash
-../scripts/run-core.sh
+cd ..
+export PHAROS_CAPABILITY_TOKEN="$(openssl rand -hex 32)"
+./scripts/run-core.sh &
+PHAROSD_PID=$!
+trap 'kill "$PHAROSD_PID" 2>/dev/null || true' EXIT
 ```
 
-Capture a manual request from another terminal:
+The token must be exactly 64 lowercase hexadecimal characters. Keep it in the
+process environment only. `run-core.sh` refuses missing or malformed values
+before creating directories or opening SQLite, and never generates, persists,
+or prints the capability.
+
+To capture directly through the CLI from the repository root:
 
 ```bash
-PHAROS_DB=var/pharos.dev.sqlite dune exec pharos -- capture "Review the GitLab MR about the billing retry logic"
+(cd core && PHAROS_DB=../var/pharos.dev.sqlite dune exec pharos -- capture "Review the GitLab MR about the billing retry logic")
 ```
 
-Or via HTTP:
+Every `/v0/*` request requires the same capability; `/health` is public:
 
 ```bash
 curl -s http://127.0.0.1:8765/health | jq
 curl -s -X POST http://127.0.0.1:8765/v0/capture \
   -H 'content-type: application/json' \
+  -H "Authorization: Bearer $PHAROS_CAPABILITY_TOKEN" \
   -d '{"body":"Follow up on Feishu project blocker before standup","title":"Follow up blocker"}' | jq
-curl -s http://127.0.0.1:8765/v0/today | jq
+curl -s http://127.0.0.1:8765/v0/today \
+  -H "Authorization: Bearer $PHAROS_CAPABILITY_TOKEN" | jq
 ```
 
-### 2. SwiftUI shell
+Launch the Swift app from that same shell so it inherits the capability:
 
 ```bash
-cd ui/macos/PharosApp
-open Package.swift
+swift run --package-path ui/macos/PharosApp
 ```
 
-Run the `PharosApp` target in Xcode. The app expects the core daemon at `http://127.0.0.1:8765`.
+### Optional: run from Xcode
+
+```bash
+launchctl setenv PHAROS_CAPABILITY_TOKEN "$PHAROS_CAPABILITY_TOKEN"
+open ui/macos/PharosApp/Package.swift
+```
+
+Launch Xcode after `launchctl setenv`, then run the `PharosApp` target. Remove
+the inherited value when finished:
+
+```bash
+launchctl unsetenv PHAROS_CAPABILITY_TOKEN
+```
+
+Do not add the token to a shared scheme or checked-in file. The app expects the
+core daemon at `http://127.0.0.1:8765` and fails before network transport when
+its capability is missing or malformed.
 
 ## Development philosophy
 
@@ -94,9 +121,10 @@ Pharos should feel like a tower cockpit, not a runaway sprinkler system. The cor
 - [User experience](docs/USER_EXPERIENCE.md)
 - [PRD v0.3](docs/PRD_v0.3.md)
 - [PRD v0.2](docs/PRD_v0.2.md)
-- [Architecture](docs/ARCHITECTURE.md)
+- [Architecture baseline](docs/ARCHITECTURE.md)
 - [Iteration plan](docs/ITERATION_PLAN.md)
-- [Codex implementation plan](docs/CODEX_PLAN.md)
+- [v0.3 execution plan](docs/v0.3-plan/EXECUTION_ORDER.md)
+- [Historical Codex implementation outline](docs/CODEX_PLAN.md)
 - [Security and invariants](docs/SECURITY.md)
 - [Dogfood plan](docs/DOGFOOD.md)
 - [Adapter protocol](docs/ADAPTER_PROTOCOL.md)
@@ -106,9 +134,9 @@ Pharos should feel like a tower cockpit, not a runaway sprinkler system. The cor
 
 Product surface source of truth: `docs/USER_EXPERIENCE.md`
 MVP scope source of truth: `docs/PRD_v0.3.md`
-Architecture source of truth: `docs/ARCHITECTURE.md`
-Codex task source of truth: `docs/CODEX_PLAN.md`
-Historical baseline: `docs/PRD_v0.2.md`
+v0.3 execution and safety source of truth: `docs/v0.3-plan/`
+Architecture baseline: `docs/ARCHITECTURE.md`
+Historical baselines: `docs/PRD_v0.2.md`, `docs/CODEX_PLAN.md`
 
 ## Repository status
 

@@ -77,6 +77,30 @@ let reload_action store action_id =
   | Some action -> action
   | None -> failf "missing action %s" action_id
 
+let metric_today store = Store.get_metric_for_day store (Time.today_utc ())
+
+let review_snapshot store request_id action_id =
+  ( reload_request store request_id,
+    reload_action store action_id,
+    Option.get (Runner.get_detail store request_id),
+    metric_today store,
+    Store.get_latest_approval_for_action store action_id )
+
+let expect_stale label ~action_id ~expected_hash ~actual_hash = function
+  | Error
+      (Policy.StaleAction
+        {
+          action_id = stale_id;
+          expected_hash = stale_expected;
+          actual_hash = stale_actual;
+        }) ->
+      expect_string (label ^ " action id") action_id stale_id;
+      expect_string (label ^ " expected hash") expected_hash stale_expected;
+      expect_string (label ^ " actual hash") actual_hash stale_actual
+  | Error error ->
+      failf "%s: unexpected error %s" label (Policy.error_to_string error)
+  | Ok _ -> failf "%s: stale review unexpectedly succeeded" label
+
 let insert_test_request store ~status ~risk =
   let now = Time.now_iso () in
   let request : work_request =
@@ -139,7 +163,10 @@ let test_edit_and_approve_updates_hash () =
     let action = first_action store request.id in
     let old_hash = action.payload_hash in
     let edited_body = "edited body" in
-    ignore (Result.get_ok (Runner.approve ~edited_body store action.id));
+    ignore
+      (Result.get_ok
+         (Runner.approve ~edited_body
+            ~expected_payload_hash:action.payload_hash store action.id));
     let edited_action = reload_action store action.id in
     expect_action_body "edited action body" edited_body edited_action.body;
     if edited_action.payload_hash = old_hash then
@@ -152,7 +179,10 @@ let test_hash_mismatch_blocks_execution () =
   with_store (fun store ->
     let request = capture store "Detect stale approval hash" in
     let action = first_action store request.id in
-    ignore (Result.get_ok (Runner.approve store action.id));
+    ignore
+      (Result.get_ok
+         (Runner.approve ~expected_payload_hash:action.payload_hash store
+            action.id));
     let tampered_body = "tampered body" in
     let tampered_hash =
       payload_hash ~target_kind:action.target_kind ~target_ref:action.target_ref
@@ -175,7 +205,9 @@ let test_proposed_action_cannot_reuse_matching_historical_approval () =
     let action = first_action store request.id in
     let approved_body = "User-edited payload A" in
     let approval =
-      Runner.approve ~edited_body:approved_body store action.id |> Result.get_ok
+      Runner.approve ~edited_body:approved_body
+        ~expected_payload_hash:action.payload_hash store action.id
+      |> Result.get_ok
     in
     let changed_body = "Generated payload B" in
     let changed_hash =
@@ -198,7 +230,10 @@ let test_rejection_blocks_execution () =
   with_store (fun store ->
     let request = capture store "Reject this action" in
     let action = first_action store request.id in
-    ignore (Result.get_ok (Runner.reject store action.id));
+    ignore
+      (Result.get_ok
+         (Runner.reject ~expected_payload_hash:action.payload_hash store
+            action.id));
     begin match Runner.execute_local store action.id with
     | Error (Policy.RejectedAction id) -> expect_string "rejected action id" action.id id
     | Error err -> failf "unexpected error: %s" (Policy.error_to_string err)
@@ -215,7 +250,7 @@ let test_high_risk_actions_block risk =
         ~target_kind:"pharos.local.complete_request" ~requires_approval:true
     in
     expect_risk_error "approve high-risk action" risk
-      (Runner.approve store action.id);
+      (Runner.approve ~expected_payload_hash:action.payload_hash store action.id);
     expect_risk_error "execute high-risk action" risk
       (Runner.execute_local store action.id))
 
@@ -249,6 +284,60 @@ let test_external_target_blocked_and_logged ?(risk = L3) () =
       failf "expected 1 blocked external write attempt, got %d"
         metric.unapproved_external_write_attempts)
 
+let test_stale_review_has_no_side_effect label review =
+  with_store (fun store ->
+    let request = capture store ("Stale " ^ label) in
+    let shown_action = first_action store request.id in
+    let refreshed_body = shown_action.body ^ " refreshed" in
+    let refreshed_hash =
+      payload_hash ~target_kind:shown_action.target_kind
+        ~target_ref:shown_action.target_ref ~risk:shown_action.risk
+        ~body:refreshed_body
+    in
+    Store.update_action_body_status_hash store ~action_id:shown_action.id
+      ~body:refreshed_body ~payload_hash:refreshed_hash
+      ~status:ActionProposed;
+    let before = review_snapshot store request.id shown_action.id in
+    expect_stale label ~action_id:shown_action.id
+      ~expected_hash:shown_action.payload_hash ~actual_hash:refreshed_hash
+      (review store shown_action);
+    let after = review_snapshot store request.id shown_action.id in
+    if before <> after then failf "%s: stale review changed persisted state" label)
+
+let test_review_transaction_rolls_back label review =
+  with_store (fun store ->
+    let request = capture store ("Rollback " ^ label) in
+    let action = first_action store request.id in
+    let before = review_snapshot store request.id action.id in
+    Store.exec store
+      "CREATE TRIGGER fail_review_approval BEFORE INSERT ON approvals BEGIN SELECT RAISE(ABORT, 'forced review failure'); END";
+    begin
+      match review store action with
+      | exception Failure _ -> ()
+      | _ -> failf "%s: forced SQL failure did not escape" label
+    end;
+    let after = review_snapshot store request.id action.id in
+    if before <> after then
+      failf "%s: review transaction did not fully roll back" label)
+
+let test_review_requires_proposed_status () =
+  with_store (fun store ->
+    let request = capture store "Double approval must be stale" in
+    let action = first_action store request.id in
+    ignore
+      (Result.get_ok
+         (Runner.approve ~expected_payload_hash:action.payload_hash store
+            action.id));
+    let approved_action = reload_action store action.id in
+    let before = review_snapshot store request.id action.id in
+    expect_stale "approved status CAS" ~action_id:action.id
+      ~expected_hash:approved_action.payload_hash
+      ~actual_hash:approved_action.payload_hash
+      (Runner.reject ~expected_payload_hash:approved_action.payload_hash store
+         action.id);
+    if before <> review_snapshot store request.id action.id then
+      failf "status CAS failure changed persisted state")
+
 let () =
   Random.self_init ();
   test_execution_requires_approval ();
@@ -259,4 +348,21 @@ let () =
   test_high_risk_actions_block L4;
   test_high_risk_actions_block L5;
   test_external_target_blocked_and_logged ();
-  test_external_target_blocked_and_logged ~risk:L5 ()
+  test_external_target_blocked_and_logged ~risk:L5 ();
+  test_stale_review_has_no_side_effect "approve"
+    (fun store action ->
+      Runner.approve ~expected_payload_hash:action.payload_hash store action.id);
+  test_stale_review_has_no_side_effect "edit-and-approve"
+    (fun store action ->
+      Runner.approve ~edited_body:"edited stale body"
+        ~expected_payload_hash:action.payload_hash store action.id);
+  test_stale_review_has_no_side_effect "reject"
+    (fun store action ->
+      Runner.reject ~expected_payload_hash:action.payload_hash store action.id);
+  test_review_transaction_rolls_back "approve"
+    (fun store action ->
+      Runner.approve ~expected_payload_hash:action.payload_hash store action.id);
+  test_review_transaction_rolls_back "reject"
+    (fun store action ->
+      Runner.reject ~expected_payload_hash:action.payload_hash store action.id);
+  test_review_requires_proposed_status ()

@@ -1,194 +1,141 @@
 # Controlled GitLab Writeback Contract
 
-Apply in task 10.
+Apply in Task 10a and Task 10b. Task 10a is a hard prerequisite for Task 10b.
 
 ## Goal
 
-Add the first real external writeback path: approved GitLab MR/Issue comment. This is the first task allowed to write to an external system.
+Close the local mutation control plane before enabling the first real external
+side effect, then deliver approved GitLab MR/Issue comments through a durable,
+reconcilable core-owned state machine.
 
-## Required safety path
+## Task 10a: local control plane and review CAS
 
-Task 09 is a hard prerequisite. It must produce a current GitLab MR action with canonical
-`target_ref = project_id=<id>;mr_iid=<iid>`, and proposal freshness must ensure that only an
-approval whose hash matches the current action payload can reach this path. An approval
-retained for audit after source evidence refresh is not executable authority.
+### Runtime boundary
 
-External writeback must flow through this shape:
+1. `pharosd` accepts only `127.0.0.1` or `::1`; other hosts fail startup.
+2. `PHAROS_CAPABILITY_TOKEN` is exactly 64 lowercase hexadecimal characters and
+   is validated before SQLite is opened.
+3. `/health` is public. Every registered `/v0/*` route validates
+   `Authorization: Bearer ...` using fixed-time comparison.
+4. Missing or malformed daemon configuration stops startup. Missing or invalid
+   caller authorization returns HTTP 401 before the route handler runs.
+5. Capability and GitLab tokens never enter SQLite, timeline, metrics, exports,
+   API examples, test snapshots, or logs.
 
-```text
-ProposedAction(target_kind="gitlab.mr.comment", body, risk=L3)
-  -> Review Gate displays body + target + evidence
-  -> user approves or edits
-  -> Approval(action_id, action_hash, approved_body)
-  -> execute external route receives action_id only or action_id + approval_id
-  -> core re-reads action, approval, request, source identity, and source settings
-  -> policy verifies hash match, source write permission, and target provenance
-  -> GitLab adapter posts comment
-  -> timeline and evidence record result URL/id/hash/approval id
-```
+The v0.3 threat model protects against non-loopback exposure, unauthenticated
+network calls, browser or accidental local calls, and other OS users. It does
+not protect against malicious software that already controls the same user
+account or process environment. Unix socket and Keychain lifecycle hardening
+remain future work.
 
-## Files to edit
+### Revision-bound review gate
 
-```text
-core/lib/policy.ml
-core/lib/store.ml
-core/lib/domain.ml
-core/lib/gitlab_write.ml or core/lib/adapters/gitlab_write.ml
-core/bin/daemon/main.ml
-core/bin/cli/main.ml
-ui/macos/PharosApp/Sources/PharosApp/Core/APIClient.swift
-ui/macos/PharosApp/Sources/PharosApp/Core/AppState.swift
-ui/macos/PharosApp/Sources/PharosApp/Views/RequestDetailView.swift
-docs/API.md
-protocol/openapi.yaml
-```
+Approve, edit-and-approve, and reject receive the action id plus the
+`expected_payload_hash` shown by the UI. The core re-reads the action inside one
+SQLite transaction and accepts the decision only when the action exists, is
+still `ActionProposed`, and its current hash matches the expected hash.
 
-## API
+The hash/status check, optional body and hash update, action/request status,
+approval or rejection record, decision timeline, and metric are one atomic
+transaction. A stale hash or status returns HTTP 409
+`{"error":"stale_action"}` with no decision side effect. Swift refreshes the
+detail and requires review of the new revision; it must not execute after a
+stale response. Direct CLI review commands require the expected hash too.
 
-Add:
+Task 10a does not add a GitLab write client, delivery route, or delivery state.
 
-```text
-POST /v0/actions/:id/execute-approved
-```
+## Task 10b: durable controlled delivery
 
-Do not make Swift call adapter-specific routes directly.
+Task 09 must already provide a current action with canonical target provenance,
+and Task 10a must already enforce caller authentication and revision-bound
+review.
 
-Request body may be `{}`.
-
-Response:
-
-```json
-{
-  "action": {},
-  "writeback": {
-    "target_kind": "gitlab.mr.comment",
-    "external_id": "note_123",
-    "external_url": "https://gitlab.example.com/...#note_123"
-  }
-}
-```
-
-## Policy checks
-
-Before calling GitLab write API:
-
-1. Action exists.
-2. Action status is not rejected or already executed.
-3. Action risk is executable in MVP.
-4. Action risk L3 requires approval.
-5. Latest approval exists.
-6. Approval hash matches current action payload hash.
-   The request/action must also still represent the current proposal after the latest source
-   evidence refresh; a stale audit approval is rejected even if it remains stored.
-7. `target_kind` is in allowlist:
+External writeback flows through this shape:
 
 ```text
-gitlab.mr.comment
-gitlab.issue.comment
+current ProposedAction(target_kind="gitlab.*.comment", risk=L3)
+  -> user reviews body, target, evidence and current payload hash
+  -> approval CAS creates Approval bound to current hash
+  -> execute-approved re-reads action/approval/request/source/settings
+  -> policy transaction creates one durable writeback attempt
+  -> GitLab client runs outside SQLite transaction and Dream event loop
+  -> finalize confirmed, failed_before_send, or unknown
+  -> unknown can only reconcile or be explicitly abandoned
 ```
 
-8. Source setting for GitLab has `write_enabled = true`.
-9. Action body is non-empty after trim.
-10. Action body length <= 8000 characters for v0.
-11. Target provenance matches the request's GitLab source object.
+### Durable attempt source of truth
 
-Target provenance means:
-
-1. Re-read the action's `request_id`.
-2. Re-read the corresponding `WorkRequest`.
-3. Re-read its source signal and/or request identity.
-4. Parse the stable GitLab source object id, for example:
+`writeback_attempts` owns delivery state; timeline and action status do not.
+Typed states are:
 
 ```text
-gitlab:project/<project_id>:mr/<iid>
-gitlab:project/<project_id>:issue/<iid>
+prepared
+in_flight
+confirmed
+unknown
+failed_before_send
+abandoned
 ```
 
-5. Parse `target_ref`.
-6. Fail closed before calling GitLab if the target object does not match the source object for that request.
+An attempt binds attempt id, action id, approval id, payload hash, target,
+stable marker, optional external id/url, sanitized error, and timestamps. One
+action may have only one active `prepared`, `in_flight`, or `unknown` attempt.
 
-## GitLab target refs
+### Policy preflight
 
-For MR comments, use:
+Before any client call, core re-reads and verifies:
 
-```text
-target_kind = gitlab.mr.comment
-target_ref = project_id=<id>;mr_iid=<iid>
-```
+1. Current action and request exist.
+2. Action is approved, not rejected or already executed.
+3. Risk is executable in v0.3; L4/L5 always fail closed.
+4. Latest approval exists and matches the current payload hash.
+5. Target kind is `gitlab.mr.comment` or `gitlab.issue.comment`.
+6. GitLab source `write_enabled` is true.
+7. Body is nonblank and at most 8000 characters.
+8. Target provenance matches the request's stable GitLab source object.
 
-For issue comments:
+MR targets use `project_id=<id>;mr_iid=<iid>` and issue targets use
+`project_id=<id>;issue_iid=<iid>`. Missing, malformed, or mismatched provenance
+must fail before the fake or real client is called.
 
-```text
-target_kind = gitlab.issue.comment
-target_ref = project_id=<id>;issue_iid=<iid>
-```
+### Delivery classification
 
-Parser must fail closed if required fields are missing.
+Only failures known before curl/config/spawn may become `failed_before_send`.
+After a child request starts, timeout, nonzero exit, oversized or invalid JSON,
+missing response id, daemon crash, and lost response all become `unknown`.
+`unknown` never retries automatically and never issues a second POST.
 
-For MR comments, `target_ref` must match a source object id equivalent to:
+The real client accepts HTTPS only, places curl `--disable` first, and restricts
+protocols. Token and body must not appear in argv, child environment, logs,
+timeline, or evidence.
 
-```text
-gitlab:project/<project_id>:mr/<iid>
-```
+### Marker reconciliation and abandon
 
-For issue comments, `target_ref` must match a source object id equivalent to:
+The stable marker binds attempt id and payload hash. Reconciliation uses the
+official GitLab MR/Issue Notes list or retrieve API with bounded pagination and
+exact marker matching. A match confirms the attempt; no match leaves it
+`unknown` and never proves non-delivery.
 
-```text
-gitlab:project/<project_id>:issue/<iid>
-```
+Only an explicit capability-authenticated abandon of an `unknown` attempt may
+set it to `abandoned`, write an audit timeline event, return the action to
+`ActionProposed`, return the request to `ReadyForReview`, and require fresh
+approval. There is no automatic retry.
 
-## Required timeline event on success
+## Required tests
 
-```text
-kind: writeback
-title: GitLab comment posted
-body: action_id=<id>; approval_id=<id>; target=<target_kind>/<target_ref>; hash=<payload_hash>; external_url=<url>
-```
+Task 10a tests all `/v0` routes for missing/wrong capability, public health,
+loopback and token-format validation, H1-to-H2 stale approve/edit/reject with no
+decision side effect, status CAS, and transaction rollback. Swift build plus
+code review proves every request carries the capability and missing config
+fails before URLSession transport.
 
-## Required evidence item on success
-
-```text
-kind: writeback.gitlab.comment
-title: GitLab writeback result
-body: Posted comment <external_id> to <target_kind>/<target_ref>
-url: external_url
-```
-
-## Tests
-
-No real GitLab calls in tests. Use a fake GitLab client.
-
-Required tests:
-
-1. Unapproved L3 action cannot execute.
-2. Edited approval posts edited content to fake client.
-3. Approval hash mismatch blocks.
-4. L4/L5 action blocks.
-5. GitLab write disabled in source settings blocks.
-6. Successful write records timeline and evidence.
-7. Target provenance mismatch blocks before the fake GitLab client is called.
-8. Swift action button calls `/execute-approved`, not `/execute-local`, for external target.
+Task 10b uses a fake GitLab client. All policy negatives keep client call count
+at zero. It also covers edited content, confirmed writeback evidence/timeline,
+remote-created-but-response-lost, crash recovery from `in_flight`, marker
+reconciliation, unknown with no second POST, explicit abandon plus fresh
+approval, and `/health` responsiveness while the client is slow.
 
 ## Non-goals
 
-1. Do not merge MR.
-2. Do not approve MR.
-3. Do not create commits.
-4. Do not support Feishu writeback in this task.
-
-## Acceptance
-
-```bash
-cd core && dune build && dune runtest
-```
-
-Manual dev acceptance with real GitLab env and write permission explicitly enabled:
-
-1. Replay or sync a GitLab MR.
-2. Generate or create an L3 GitLab comment action.
-3. Try execute without approval: blocked.
-4. Edit and approve.
-5. Execute approved action.
-6. Confirm GitLab comment body is edited body.
-7. Confirm timeline contains approval id, hash, target, and external URL.
-8. Manually or in fake-client tests, confirm a target_ref pointing at a different MR is blocked.
+No MR merge/approval, commits, Feishu writeback, generic queue framework, or
+automatic retry is part of Task 10.

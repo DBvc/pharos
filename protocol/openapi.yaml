@@ -2,6 +2,7 @@ openapi: 3.1.0
 info:
   title: Pharos Local API
   version: 0.0.3
+  description: Unreleased v0.3 local API. The daemon, bundled Swift client, and CLI are upgraded in lockstep.
 servers:
   - url: http://127.0.0.1:8765
 paths:
@@ -14,6 +15,8 @@ paths:
   /v0/capture:
     post:
       operationId: capture
+      security:
+        - CapabilityBearer: []
       requestBody:
         required: true
         content:
@@ -23,9 +26,13 @@ paths:
       responses:
         '200':
           description: Created request
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v0/source-signals:
     post:
       operationId: ingestSourceSignal
+      security:
+        - CapabilityBearer: []
       requestBody:
         required: true
         content:
@@ -39,9 +46,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SourceSignalResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v0/sources:
     get:
       operationId: listSources
+      security:
+        - CapabilityBearer: []
       responses:
         '200':
           description: Persistent source settings.
@@ -49,9 +60,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SourcesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v0/sources/{id}:
     patch:
       operationId: patchSource
+      security:
+        - CapabilityBearer: []
       parameters:
         - name: id
           in: path
@@ -71,9 +86,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SourceResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v0/today:
     get:
       operationId: today
+      security:
+        - CapabilityBearer: []
       responses:
         '200':
           description: User-facing Today snapshot grouped by attention needs.
@@ -81,16 +100,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TodaySnapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v0/debug/today-internal:
     get:
       operationId: todayInternalDebug
       description: Optional debug route. SwiftUI must not use this route.
+      security:
+        - CapabilityBearer: []
       responses:
         '200':
           description: Internal lifecycle-bucket snapshot.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v0/requests/{id}:
     get:
       operationId: getRequest
+      security:
+        - CapabilityBearer: []
       parameters:
         - name: id
           in: path
@@ -100,21 +127,37 @@ paths:
       responses:
         '200':
           description: Request detail
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v0/actions/{id}/approve:
     post:
       operationId: approveAction
+      security:
+        - CapabilityBearer: []
       parameters:
         - name: id
           in: path
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionReviewRequest'
       responses:
         '200':
           description: Approval created
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/StaleAction'
   /v0/actions/{id}/edit-and-approve:
     post:
       operationId: editAndApproveAction
+      security:
+        - CapabilityBearer: []
       parameters:
         - name: id
           in: path
@@ -127,28 +170,48 @@ paths:
           application/json:
             schema:
               type: object
-              required: [body]
+              required: [body, expected_payload_hash]
               properties:
                 body:
+                  type: string
+                expected_payload_hash:
                   type: string
       responses:
         '200':
           description: Edited approval created
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/StaleAction'
   /v0/actions/{id}/reject:
     post:
       operationId: rejectAction
+      security:
+        - CapabilityBearer: []
       parameters:
         - name: id
           in: path
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionReviewRequest'
       responses:
         '200':
           description: Rejected
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/StaleAction'
   /v0/actions/{id}/execute-local:
     post:
       operationId: executeLocalAction
+      security:
+        - CapabilityBearer: []
       parameters:
         - name: id
           in: path
@@ -158,8 +221,48 @@ paths:
       responses:
         '200':
           description: Executed local action
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 components:
+  securitySchemes:
+    CapabilityBearer:
+      type: http
+      scheme: bearer
+      description: Runtime-only 64-character lowercase hexadecimal capability configured by PHAROS_CAPABILITY_TOKEN.
+  responses:
+    Unauthorized:
+      description: Missing or invalid caller capability.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UnauthorizedError'
+    StaleAction:
+      description: The reviewed action hash or status is no longer current.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StaleActionError'
   schemas:
+    UnauthorizedError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          const: unauthorized
+    StaleActionError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          const: stale_action
+    ActionReviewRequest:
+      type: object
+      required: [expected_payload_hash]
+      properties:
+        expected_payload_hash:
+          type: string
     AttentionGroup:
       type: string
       enum:
