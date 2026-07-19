@@ -11,6 +11,7 @@ private enum APIClientConfigurationError: LocalizedError {
 struct APIClient {
     var baseURL: URL = URL(string: "http://127.0.0.1:8765")!
     var capabilityToken: String? = ProcessInfo.processInfo.environment["PHAROS_CAPABILITY_TOKEN"]
+    var session: URLSession = .shared
 
     private func endpoint(_ path: String) -> URL {
         URL(string: path, relativeTo: baseURL)!.absoluteURL
@@ -82,11 +83,23 @@ struct APIClient {
         try await request(path: "/v0/actions/\(actionId)/execute-local", method: "POST", emptyBody: true)
     }
 
+    func executeApproved(actionId: String) async throws -> WritebackAttemptResponse {
+        try await request(path: "/v0/actions/\(actionId)/execute-approved", method: "POST", emptyBody: true)
+    }
+
+    func reconcileWriteback(attemptId: String) async throws -> WritebackAttemptResponse {
+        try await request(path: "/v0/writeback-attempts/\(attemptId)/reconcile", method: "POST", emptyBody: true)
+    }
+
+    func abandonWriteback(attemptId: String) async throws -> WritebackAttemptResponse {
+        try await request(path: "/v0/writeback-attempts/\(attemptId)/abandon", method: "POST", emptyBody: true)
+    }
+
     private func request<T: Decodable>(path: String, method: String = "GET") async throws -> T {
         var request = URLRequest(url: endpoint(path))
         request.httpMethod = method
         try authorize(&request)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         try validate(data: data, response: response)
         return try decoder.decode(T.self, from: data)
     }
@@ -97,7 +110,7 @@ struct APIClient {
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try encoder.encode(body)
         try authorize(&request)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         try validate(data: data, response: response)
         return try decoder.decode(T.self, from: data)
     }
@@ -110,7 +123,7 @@ struct APIClient {
             request.httpBody = Data("{}".utf8)
         }
         try authorize(&request)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         try validate(data: data, response: response)
         return try decoder.decode(T.self, from: data)
     }

@@ -16,6 +16,9 @@ let usage () =
   prerr_endline "  pharos approve <action-id> <expected-payload-hash>";
   prerr_endline "  pharos reject <action-id> <expected-payload-hash>";
   prerr_endline "  pharos execute-local <action-id>";
+  prerr_endline "  pharos execute-approved <action-id>";
+  prerr_endline "  pharos reconcile-writeback <attempt-id>";
+  prerr_endline "  pharos abandon-writeback <attempt-id>";
   exit 2
 
 let rec parse_options args title url body_parts =
@@ -32,6 +35,23 @@ let print_json json =
 let with_store f =
   let store = Store.connect (db_path ()) in
   Fun.protect ~finally:(fun () -> Store.close store) (fun () -> f store)
+
+let with_delivery_store f =
+  let path = db_path () in
+  match Store.acquire_delivery_owner path with
+  | Error error ->
+      prerr_endline error;
+      exit 1
+  | Ok owner ->
+      Fun.protect
+        ~finally:(fun () -> Store.release_delivery_owner owner)
+        (fun () ->
+          let store = Store.connect path in
+          Fun.protect
+            ~finally:(fun () -> Store.close store)
+            (fun () ->
+              Runner.recover_interrupted_writebacks store;
+              f store))
 
 let read_file path =
   let channel = open_in_bin path in
@@ -92,4 +112,35 @@ let () =
         match Runner.execute_local store id with
         | Ok action -> print_json (Domain.proposed_action_to_yojson action)
         | Error err -> prerr_endline (Policy.error_to_string err); exit 1)
+  | [ "execute-approved"; id ] ->
+      with_delivery_store (fun store ->
+        match
+          Runner.execute_approved ~client:Gitlab_write.real_client store id
+        with
+        | Ok (action, attempt) ->
+            print_json
+              (Domain.writeback_attempt_response_to_yojson action attempt)
+        | Error err ->
+            prerr_endline (Policy.error_to_string err);
+            exit 1)
+  | [ "reconcile-writeback"; id ] ->
+      with_delivery_store (fun store ->
+        match
+          Runner.reconcile_writeback ~client:Gitlab_write.real_client store id
+        with
+        | Ok (action, attempt) ->
+            print_json
+              (Domain.writeback_attempt_response_to_yojson action attempt)
+        | Error err ->
+            prerr_endline (Policy.error_to_string err);
+            exit 1)
+  | [ "abandon-writeback"; id ] ->
+      with_delivery_store (fun store ->
+        match Runner.abandon_writeback store id with
+        | Ok (action, attempt) ->
+            print_json
+              (Domain.writeback_attempt_response_to_yojson action attempt)
+        | Error err ->
+            prerr_endline (Policy.error_to_string err);
+            exit 1)
   | _ -> usage ()

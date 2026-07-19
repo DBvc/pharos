@@ -85,6 +85,32 @@ type approval = {
   created_at : string;
 }
 
+type writeback_status =
+  | WritebackPrepared
+  | WritebackInFlight
+  | WritebackConfirmed
+  | WritebackUnknown
+  | WritebackFailedBeforeSend
+  | WritebackAbandoned
+
+type writeback_attempt = {
+  id : string;
+  action_id : string;
+  approval_id : string;
+  payload_hash : string;
+  target_kind : string;
+  target_ref : string;
+  marker : string;
+  status : writeback_status;
+  external_id : string option;
+  external_url : string option;
+  error : string option;
+  created_at : string;
+  updated_at : string;
+  started_at : string option;
+  finished_at : string option;
+}
+
 type evidence_item = {
   id : string;
   request_id : string;
@@ -137,6 +163,7 @@ type source_config_patch = {
 type request_detail = {
   request : work_request;
   actions : proposed_action list;
+  writeback_attempts : writeback_attempt list;
   evidence : evidence_item list;
   timeline : timeline_event list;
 }
@@ -298,6 +325,23 @@ let approval_decision_of_string = function
   | "rejected" -> RejectedDecision
   | _ -> ApprovedDecision
 
+let writeback_status_to_string = function
+  | WritebackPrepared -> "prepared"
+  | WritebackInFlight -> "in_flight"
+  | WritebackConfirmed -> "confirmed"
+  | WritebackUnknown -> "unknown"
+  | WritebackFailedBeforeSend -> "failed_before_send"
+  | WritebackAbandoned -> "abandoned"
+
+let writeback_status_of_string = function
+  | "prepared" -> WritebackPrepared
+  | "in_flight" -> WritebackInFlight
+  | "confirmed" -> WritebackConfirmed
+  | "unknown" -> WritebackUnknown
+  | "failed_before_send" -> WritebackFailedBeforeSend
+  | "abandoned" -> WritebackAbandoned
+  | _ -> WritebackUnknown
+
 let risk_requires_approval = function
   | L0 | L1 | L2 -> false
   | L3 | L4 | L5 -> true
@@ -401,6 +445,31 @@ let approval_to_yojson (a : approval) =
     Json_util.str "created_at" a.created_at;
   ]
 
+let writeback_attempt_to_yojson (attempt : writeback_attempt) =
+  Json_util.assoc [
+    Json_util.str "id" attempt.id;
+    Json_util.str "action_id" attempt.action_id;
+    Json_util.str "approval_id" attempt.approval_id;
+    Json_util.str "payload_hash" attempt.payload_hash;
+    Json_util.str "target_kind" attempt.target_kind;
+    Json_util.str "target_ref" attempt.target_ref;
+    Json_util.str "marker" attempt.marker;
+    Json_util.str "status" (writeback_status_to_string attempt.status);
+    Json_util.opt_str "external_id" attempt.external_id;
+    Json_util.opt_str "external_url" attempt.external_url;
+    Json_util.opt_str "error" attempt.error;
+    Json_util.str "created_at" attempt.created_at;
+    Json_util.str "updated_at" attempt.updated_at;
+    Json_util.opt_str "started_at" attempt.started_at;
+    Json_util.opt_str "finished_at" attempt.finished_at;
+  ]
+
+let writeback_attempt_response_to_yojson action attempt =
+  Json_util.assoc [
+    ("action", proposed_action_to_yojson action);
+    ("attempt", writeback_attempt_to_yojson attempt);
+  ]
+
 let evidence_item_to_yojson (e : evidence_item) =
   Json_util.assoc [
     Json_util.str "id" e.id;
@@ -446,6 +515,8 @@ let request_detail_to_yojson (d : request_detail) =
   Json_util.assoc [
     ("request", work_request_to_yojson d.request);
     Json_util.list "actions" proposed_action_to_yojson d.actions;
+    Json_util.list "writeback_attempts" writeback_attempt_to_yojson
+      d.writeback_attempts;
     Json_util.list "evidence" evidence_item_to_yojson d.evidence;
     Json_util.list "timeline" timeline_event_to_yojson d.timeline;
   ]

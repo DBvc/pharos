@@ -1,6 +1,8 @@
 open Pharos_core
 open Pharos_core.Domain
 
+let ( >>= ) = Lwt.bind
+
 let failf fmt = Printf.ksprintf failwith fmt
 
 let capability_token = String.make 64 'a'
@@ -28,6 +30,18 @@ let first_action store request_id =
   match Runner.get_detail store request_id with
   | Some { actions = action :: _; _ } -> action
   | _ -> failf "missing action for request %s" request_id
+
+let gitlab_input () : Runner.source_signal_input =
+  {
+    kind = GitLab;
+    external_id = Some "gitlab:project/123:mr/456";
+    actor = "alice";
+    title = "Review requested";
+    body = "Alice requested review.";
+    url = Some "https://gitlab.example/group/project/-/merge_requests/456";
+    occurred_at = "2026-07-19T00:00:00Z";
+    raw_json = Some {|{"project_id":123,"iid":456}|};
+  }
 
 let database_snapshot store =
   let requests = Store.list_work_requests store in
@@ -114,6 +128,137 @@ let test_daemon_rejects_config_before_sqlite () =
       if created_db then failf "%s created SQLite before rejecting startup" label)
     cases
 
+let test_delivery_owner_blocks_recovery_until_lock_acquired () =
+  let db_path = temp_db () in
+  let alias_path = db_path ^ ".alias" in
+  let dotted_path =
+    Filename.concat (Filename.dirname db_path)
+      (Filename.concat "." (Filename.basename db_path))
+  in
+  let lock_path = Store.delivery_lock_path db_path in
+  let cleanup () =
+    List.iter
+      (fun path -> if Sys.file_exists path then Sys.remove path)
+      [
+        alias_path;
+        db_path;
+        db_path ^ "-shm";
+        db_path ^ "-wal";
+        lock_path;
+        alias_path ^ "-delivery.lock";
+      ]
+  in
+  Fun.protect ~finally:cleanup (fun () ->
+    Unix.symlink (Filename.basename db_path) alias_path;
+    let alias_lock_path = Store.delivery_lock_path alias_path in
+    if alias_lock_path <> lock_path then
+      failf "dangling database symlink derived a different delivery lock: %s <> %s"
+        alias_lock_path lock_path;
+    let dotted_lock_path = Store.delivery_lock_path dotted_path in
+    if dotted_lock_path <> lock_path then
+      failf "dotted database path derived a different delivery lock: %s <> %s"
+        dotted_lock_path lock_path;
+    let owner = Store.acquire_delivery_owner alias_path |> Result.get_ok in
+    let attempt_id =
+      Fun.protect
+        ~finally:(fun () -> Store.release_delivery_owner owner)
+        (fun () ->
+          let attempt_id =
+            let store = Store.connect alias_path in
+            Fun.protect
+              ~finally:(fun () -> Store.close store)
+              (fun () ->
+                let response =
+                  Runner.ingest_source_signal store (gitlab_input ())
+                in
+                let action = first_action store response.request.id in
+                ignore
+                  (Source_settings.patch_source store
+                     (Store.source_config_id GitLab)
+                     {
+                       enabled = Some true;
+                       read_enabled = None;
+                       write_enabled = Some true;
+                       scope_json = Some "{}";
+                     }
+                  |> Result.get_ok);
+                ignore
+                  (Runner.approve ~expected_payload_hash:action.payload_hash
+                     store action.id
+                  |> Result.get_ok);
+                let operation =
+                  Runner.start_writeback store action.id |> Result.get_ok
+                in
+                operation.attempt.id)
+          in
+          let alias_lock_path_after_create =
+            Store.delivery_lock_path alias_path
+          in
+          if alias_lock_path_after_create <> lock_path then
+            failf
+              "database creation changed the symlink delivery lock: %s <> %s"
+              alias_lock_path_after_create lock_path;
+          let daemon = "../bin/daemon/main.exe" in
+          let sink = Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0 in
+          let result =
+            Fun.protect
+              ~finally:(fun () -> Unix.close sink)
+              (fun () ->
+                let argv =
+                  [|
+                    daemon;
+                    "--db";
+                    db_path;
+                    "--host";
+                    "127.0.0.1";
+                    "--port";
+                    "0";
+                  |]
+                in
+                let pid =
+                  Unix.create_process_env daemon argv
+                    (environment_with_capability (Some capability_token))
+                    Unix.stdin sink sink
+                in
+                wait_for_exit pid)
+          in
+          begin
+            match result with
+            | Ok (Unix.WEXITED 2) -> ()
+            | Ok (Unix.WEXITED code) ->
+                failf "lock-contended daemon exited %d instead of 2" code
+            | Ok (Unix.WSIGNALED signal) ->
+                failf "lock-contended daemon was killed by signal %d" signal
+            | Ok (Unix.WSTOPPED signal) ->
+                failf "lock-contended daemon stopped on signal %d" signal
+            | Error error -> failf "lock-contended daemon: %s" error
+          end;
+          let store = Store.connect db_path in
+          Fun.protect
+            ~finally:(fun () -> Store.close store)
+            (fun () ->
+              let attempt =
+                Option.get (Store.get_writeback_attempt store attempt_id)
+              in
+              if attempt.status <> WritebackInFlight then
+                failf "lock contention recovered writeback before ownership");
+          attempt_id)
+    in
+    let recovery_owner = Store.acquire_delivery_owner db_path |> Result.get_ok in
+    Fun.protect
+      ~finally:(fun () -> Store.release_delivery_owner recovery_owner)
+      (fun () ->
+        let store = Store.connect dotted_path in
+        Fun.protect
+          ~finally:(fun () -> Store.close store)
+          (fun () ->
+            Runner.recover_interrupted_writebacks store;
+            let attempt =
+              Option.get (Store.get_writeback_attempt store attempt_id)
+            in
+            if attempt.status <> WritebackUnknown then
+              failf "owned recovery did not restore unknown writeback")))
+
 let expect_unauthorized store handler request =
   let before = database_snapshot store in
   let response = request handler in
@@ -171,6 +316,16 @@ let protected_requests request_id (proposed_action : proposed_action)
       call handler ?authorization ~method_:`POST
         ~target:("/v0/actions/" ^ approved_action.id ^ "/execute-local")
         "{}");
+    (fun handler ->
+      call handler ?authorization ~method_:`POST
+        ~target:("/v0/actions/" ^ approved_action.id ^ "/execute-approved")
+        "{}");
+    (fun handler ->
+      call handler ?authorization ~method_:`POST
+        ~target:"/v0/writeback-attempts/wba_auth/reconcile" "{}");
+    (fun handler ->
+      call handler ?authorization ~method_:`POST
+        ~target:"/v0/writeback-attempts/wba_auth/abandon" "{}");
   ]
 
 let test_all_v0_routes_require_capability () =
@@ -199,6 +354,61 @@ let test_health_is_public () =
     let response = call handler ~method_:`GET ~target:"/health" "" in
     let status = Dream.status response |> Dream.status_to_int in
     if status <> 200 then failf "public health returned %d" status)
+
+let test_slow_writeback_does_not_block_health () =
+  with_store (fun store ->
+    let response = Runner.ingest_source_signal store (gitlab_input ()) in
+    let action = first_action store response.request.id in
+    ignore
+      (Source_settings.patch_source store (Store.source_config_id GitLab)
+         {
+           enabled = Some true;
+           read_enabled = None;
+           write_enabled = Some true;
+           scope_json = Some "{}";
+         }
+      |> Result.get_ok);
+    ignore
+      (Runner.approve ~expected_payload_hash:action.payload_hash store action.id
+      |> Result.get_ok);
+    let slow_client : Gitlab_write.client =
+      {
+        post =
+          (fun _ ->
+            Unix.sleepf 0.5;
+            Gitlab_write.Confirmed
+              {
+                external_id = "note_123";
+                external_url =
+                  "https://gitlab.example/group/project/-/merge_requests/456#note_123";
+              });
+        reconcile = (fun _ -> Gitlab_write.Marker_not_found);
+      }
+    in
+    let handler = App.routes ~gitlab_client:slow_client store capability_token in
+    let execute_request =
+      Dream.request ~method_:`POST
+        ~target:("/v0/actions/" ^ action.id ^ "/execute-approved")
+        ~headers:[ ("Authorization", authorization) ] "{}"
+    in
+    let health_request = Dream.request ~method_:`GET ~target:"/health" "" in
+    let execute_response, (health_response, health_latency) =
+      Lwt_main.run
+        (Lwt.both (handler execute_request)
+           (Lwt_unix.sleep 0.05 >>= fun () ->
+            let started_at = Unix.gettimeofday () in
+            handler health_request >>= fun response ->
+            Lwt.return (response, Unix.gettimeofday () -. started_at)))
+    in
+    let execute_status =
+      Dream.status execute_response |> Dream.status_to_int
+    in
+    if execute_status <> 200 then
+      failf "slow writeback returned %d" execute_status;
+    let health_status = Dream.status health_response |> Dream.status_to_int in
+    if health_status <> 200 then failf "health returned %d" health_status;
+    if health_latency >= 0.3 then
+      failf "slow writeback blocked health for %.3fs" health_latency)
 
 let test_valid_capability_reaches_v0_routes () =
   with_store (fun store ->
@@ -371,8 +581,10 @@ let () =
   Random.self_init ();
   test_capability_primitives ();
   test_daemon_rejects_config_before_sqlite ();
+  test_delivery_owner_blocks_recovery_until_lock_acquired ();
   test_all_v0_routes_require_capability ();
   test_health_is_public ();
+  test_slow_writeback_does_not_block_health ();
   test_valid_capability_reaches_v0_routes ();
   test_stale_review_routes_return_conflict ();
   test_source_scope_api_validation_and_repair ()

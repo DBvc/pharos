@@ -31,6 +31,19 @@ let () =
           "pharosd requires a valid PHAROS_CAPABILITY_TOKEN before startup";
         exit 2
   in
-  let store = Store.connect db_path in
-  Printf.printf "pharosd listening on http://%s:%d\n%!" host port;
-  Dream.run ~interface:host ~port (App.routes store capability_token)
+  match Store.acquire_delivery_owner db_path with
+  | Error error ->
+      prerr_endline error;
+      exit 2
+  | Ok owner ->
+      Fun.protect
+        ~finally:(fun () -> Store.release_delivery_owner owner)
+        (fun () ->
+          let store = Store.connect db_path in
+          Fun.protect
+            ~finally:(fun () -> Store.close store)
+            (fun () ->
+              Runner.recover_interrupted_writebacks store;
+              Printf.printf "pharosd listening on http://%s:%d\n%!" host port;
+              Dream.run ~interface:host ~port
+                (App.routes store capability_token)))

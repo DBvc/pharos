@@ -2,7 +2,7 @@
  (name pharos_daemon_app)
  (wrapped false)
  (modules app)
- (libraries pharos_core dream yojson lwt))
+ (libraries pharos_core dream yojson lwt.unix))
 
 (executable
  (public_name pharosd)

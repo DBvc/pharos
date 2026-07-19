@@ -131,6 +131,10 @@ paths:
       responses:
         '200':
           description: Request detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestDetail'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v0/actions/{id}/approve:
@@ -229,6 +233,81 @@ paths:
           description: Executed local action
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v0/actions/{id}/execute-approved:
+    post:
+      operationId: executeApprovedAction
+      description: Runs policy preflight, persists an attempt, and delivers an approved GitLab MR or issue comment outside the SQLite transaction and Dream event loop.
+      security:
+        - CapabilityBearer: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Durable attempt finalized as confirmed, failed_before_send, or unknown.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WritebackAttemptResponse'
+        '400':
+          description: Policy preflight failed before GitLab transport.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: An active attempt already exists or the action state changed.
+  /v0/writeback-attempts/{id}/reconcile:
+    post:
+      operationId: reconcileWritebackAttempt
+      description: Checks bounded GitLab Notes pages for the exact marker of an unknown attempt; it never issues a second comment POST.
+      security:
+        - CapabilityBearer: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Reconciliation result. Marker absence leaves the attempt unknown.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WritebackAttemptResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Writeback attempt not found.
+        '409':
+          description: The attempt is not in unknown state.
+  /v0/writeback-attempts/{id}/abandon:
+    post:
+      operationId: abandonWritebackAttempt
+      description: Explicitly abandons an unknown attempt and returns its action to proposed for fresh review and approval.
+      security:
+        - CapabilityBearer: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Attempt abandoned; no GitLab request was made.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WritebackAttemptResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Writeback attempt not found.
+        '409':
+          description: The attempt is not in unknown state.
 components:
   securitySchemes:
     CapabilityBearer:
@@ -271,6 +350,106 @@ components:
           type: string
           description: Opaque action revision returned by the API. Current v0.3 actions use sha256 followed by 64 lowercase hexadecimal characters; clients must echo the value without recomputing it.
           example: sha256:6f61c67b639f2adab56d4cec560d4a18fbf805531cebdc6fd8f74d0cce6e46f4
+    ProposedAction:
+      type: object
+      required: [id, request_id, title, body, target_kind, target_ref, risk, requires_approval, status, payload_hash, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        request_id:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        target_kind:
+          type: string
+        target_ref:
+          type: string
+        risk:
+          type: string
+          enum: [l0, l1, l2, l3, l4, l5]
+        requires_approval:
+          type: boolean
+        status:
+          type: string
+          enum: [proposed, approved, executing, executed, rejected, failed]
+        payload_hash:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        created_at:
+          type: string
+        updated_at:
+          type: string
+    WritebackStatus:
+      type: string
+      enum: [prepared, in_flight, confirmed, unknown, failed_before_send, abandoned]
+    WritebackAttempt:
+      type: object
+      required: [id, action_id, approval_id, payload_hash, target_kind, target_ref, marker, status, external_id, external_url, error, created_at, updated_at, started_at, finished_at]
+      properties:
+        id:
+          type: string
+        action_id:
+          type: string
+        approval_id:
+          type: string
+        payload_hash:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        target_kind:
+          type: string
+          enum: [gitlab.mr.comment, gitlab.issue.comment]
+        target_ref:
+          type: string
+        marker:
+          type: string
+        status:
+          $ref: '#/components/schemas/WritebackStatus'
+        external_id:
+          type: [string, 'null']
+        external_url:
+          type: [string, 'null']
+        error:
+          type: [string, 'null']
+        created_at:
+          type: string
+        updated_at:
+          type: string
+        started_at:
+          type: [string, 'null']
+        finished_at:
+          type: [string, 'null']
+    WritebackAttemptResponse:
+      type: object
+      required: [action, attempt]
+      properties:
+        action:
+          $ref: '#/components/schemas/ProposedAction'
+        attempt:
+          $ref: '#/components/schemas/WritebackAttempt'
+    RequestDetail:
+      type: object
+      required: [request, actions, writeback_attempts, evidence, timeline]
+      properties:
+        request:
+          $ref: '#/components/schemas/WorkRequest'
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProposedAction'
+        writeback_attempts:
+          type: array
+          items:
+            $ref: '#/components/schemas/WritebackAttempt'
+        evidence:
+          type: array
+          items:
+            type: object
+        timeline:
+          type: array
+          items:
+            type: object
     AttentionGroup:
       type: string
       enum:

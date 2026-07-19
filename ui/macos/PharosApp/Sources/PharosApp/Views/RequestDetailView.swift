@@ -59,7 +59,10 @@ struct RequestDetailView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(detail.actions) { action in
-                    ProposedActionView(action: action)
+                    ProposedActionView(
+                        action: action,
+                        attempts: detail.writebackAttempts.filter { $0.actionId == action.id }
+                    )
                     if action.id != detail.actions.last?.id { Divider() }
                 }
             }
@@ -143,6 +146,7 @@ struct RequestDetailView: View {
 struct ProposedActionView: View {
     @EnvironmentObject private var appState: AppState
     let action: ProposedAction
+    let attempts: [WritebackAttempt]
     @State private var editedBody: String = ""
 
     var body: some View {
@@ -156,33 +160,46 @@ struct ProposedActionView: View {
             LabeledContent("Target object", value: action.targetRef)
             LabeledContent("External write", value: isLocalTarget ? "no" : "yes")
             LabeledContent("Risk", value: action.risk.label)
+            if let latestAttempt {
+                LabeledContent("Delivery", value: latestAttempt.status.label)
+                if let externalURL = latestAttempt.externalUrl,
+                   let url = URL(string: externalURL) {
+                    Link("Open delivered comment", destination: url)
+                }
+            }
             TextEditor(text: $editedBody)
                 .font(.body.monospaced())
                 .frame(minHeight: 120)
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.25)))
                 .onAppear { editedBody = action.body }
             HStack {
-                Button(approveButtonTitle) {
-                    Task { await appState.approve(action, executeAfterApproval: isLocalTarget) }
-                }
-                .disabled(isTerminal)
+                if action.status == .proposed {
+                    Button(approveButtonTitle) {
+                        Task { await appState.approve(action) }
+                    }
 
-                Button("Edit and Approve") {
-                    Task { await appState.editAndApprove(action, body: editedBody, executeAfterApproval: isLocalTarget) }
-                }
-                .disabled(isTerminal)
+                    Button("Edit and Approve") {
+                        Task { await appState.editAndApprove(action, body: editedBody) }
+                    }
 
-                Button("Reject", role: .destructive) {
-                    Task { await appState.reject(action) }
+                    Button("Reject", role: .destructive) {
+                        Task { await appState.reject(action) }
+                    }
+                } else if !isLocalTarget && action.status == .approved {
+                    Button(latestAttempt?.status == .failedBeforeSend ? "Retry send" : "Send approved comment") {
+                        Task { await appState.executeApproved(action) }
+                    }
+                } else if let latestAttempt, latestAttempt.status == .unknown {
+                    Button("Reconcile") {
+                        Task { await appState.reconcile(latestAttempt) }
+                    }
+
+                    Button("Abandon", role: .destructive) {
+                        Task { await appState.abandon(latestAttempt) }
+                    }
                 }
-                .disabled(isTerminal)
 
                 Spacer()
-            }
-            if !isLocalTarget {
-                Text("External writeback is not implemented in this build.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -191,8 +208,8 @@ struct ProposedActionView: View {
         action.targetKind.hasPrefix("pharos.")
     }
 
-    private var isTerminal: Bool {
-        action.status == .executed || action.status == .rejected
+    private var latestAttempt: WritebackAttempt? {
+        attempts.last
     }
 
     private var approveButtonTitle: String {

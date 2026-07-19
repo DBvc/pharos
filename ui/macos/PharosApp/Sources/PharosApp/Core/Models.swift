@@ -68,6 +68,19 @@ enum ActionStatus: String, Codable {
     case failed
 }
 
+enum WritebackStatus: String, Codable {
+    case prepared
+    case inFlight = "in_flight"
+    case confirmed
+    case unknown
+    case failedBeforeSend = "failed_before_send"
+    case abandoned
+
+    var label: String {
+        rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+}
+
 struct WorkRequest: Identifiable, Codable, Hashable {
     let id: String
     let title: String
@@ -96,6 +109,24 @@ struct ProposedAction: Identifiable, Codable, Hashable {
     let payloadHash: String
     let createdAt: String
     let updatedAt: String
+}
+
+struct WritebackAttempt: Identifiable, Codable, Hashable {
+    let id: String
+    let actionId: String
+    let approvalId: String
+    let payloadHash: String
+    let targetKind: String
+    let targetRef: String
+    let marker: String
+    let status: WritebackStatus
+    let externalId: String?
+    let externalUrl: String?
+    let error: String?
+    let createdAt: String
+    let updatedAt: String
+    let startedAt: String?
+    let finishedAt: String?
 }
 
 struct EvidenceItem: Identifiable, Codable, Hashable {
@@ -169,6 +200,7 @@ struct TodaySnapshot: Codable {
 struct RequestDetail: Codable {
     let request: WorkRequest
     let actions: [ProposedAction]
+    let writebackAttempts: [WritebackAttempt]
     let evidence: [EvidenceItem]
     let timeline: [TimelineEvent]
 }
@@ -227,6 +259,11 @@ struct ApprovalResponse: Decodable {
 
 struct ActionResponse: Decodable {
     let action: ProposedAction
+}
+
+struct WritebackAttemptResponse: Decodable {
+    let action: ProposedAction
+    let attempt: WritebackAttempt
 }
 
 struct APIErrorResponse: Decodable, Error {

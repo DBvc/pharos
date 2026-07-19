@@ -4,10 +4,68 @@ module S = Sqlite3
 
 type t = { db : S.db }
 
+type delivery_owner = { descriptor : Unix.file_descr }
+
 let ensure_parent_dir path =
   match Filename.dirname path with
   | "." | "" -> ()
   | dir -> if not (Sys.file_exists dir) then Unix.mkdir dir 0o755
+
+let absolute_path path =
+  if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path else path
+
+let rec canonical_database_path path =
+  let absolute = absolute_path path in
+  match Unix.realpath absolute with
+  | path -> path
+  | exception Unix.Unix_error ((Unix.ENOENT | Unix.ENOTDIR), _, _) ->
+      let parent = Unix.realpath (Filename.dirname absolute) in
+      let unresolved = Filename.concat parent (Filename.basename absolute) in
+      begin
+        match (Unix.lstat unresolved).st_kind with
+        | Unix.S_LNK ->
+            let target = Unix.readlink unresolved in
+            let target =
+              if Filename.is_relative target then Filename.concat parent target
+              else target
+            in
+            canonical_database_path target
+        | _ -> unresolved
+        | exception Unix.Unix_error (Unix.ENOENT, _, _) -> unresolved
+      end
+
+let delivery_lock_path db_path =
+  canonical_database_path db_path ^ "-delivery.lock"
+
+let acquire_delivery_owner db_path =
+  try
+    ensure_parent_dir db_path;
+    let lock_path = delivery_lock_path db_path in
+    ensure_parent_dir lock_path;
+    let descriptor =
+      Unix.openfile lock_path [ Unix.O_WRONLY; Unix.O_CREAT ] 0o600
+    in
+    Unix.set_close_on_exec descriptor;
+    match Unix.lockf descriptor Unix.F_TLOCK 0 with
+    | () -> Ok { descriptor }
+    | exception Unix.Unix_error ((Unix.EACCES | Unix.EAGAIN), _, _) ->
+        Unix.close descriptor;
+        Error
+          (Printf.sprintf
+             "GitLab delivery owner is already active for database %s" db_path)
+    | exception Unix.Unix_error (error, _, _) ->
+        Unix.close descriptor;
+        Error
+          (Printf.sprintf "Unable to acquire GitLab delivery owner: %s"
+             (Unix.error_message error))
+  with Unix.Unix_error (error, _, _) ->
+    Error
+      (Printf.sprintf "Unable to open GitLab delivery owner lock: %s"
+         (Unix.error_message error))
+
+let release_delivery_owner owner =
+  (try Unix.lockf owner.descriptor Unix.F_ULOCK 0 with _ -> ());
+  try Unix.close owner.descriptor with _ -> ()
 
 let close t = ignore (S.db_close t.db)
 
@@ -143,6 +201,31 @@ let insert_approval t (a : approval) =
     bind_text stmt 4 (approval_decision_to_string a.decision);
     bind_opt_text stmt 5 a.approved_body;
     bind_text stmt 6 a.created_at;
+    step_done stmt)
+
+let insert_writeback_attempt t (attempt : writeback_attempt) =
+  with_stmt t {|
+    INSERT INTO writeback_attempts
+    (id, action_id, approval_id, payload_hash, target_kind, target_ref, marker,
+     status, external_id, external_url, error, created_at, updated_at,
+     started_at, finished_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  |} (fun stmt ->
+    bind_text stmt 1 attempt.id;
+    bind_text stmt 2 attempt.action_id;
+    bind_text stmt 3 attempt.approval_id;
+    bind_text stmt 4 attempt.payload_hash;
+    bind_text stmt 5 attempt.target_kind;
+    bind_text stmt 6 attempt.target_ref;
+    bind_text stmt 7 attempt.marker;
+    bind_text stmt 8 (writeback_status_to_string attempt.status);
+    bind_opt_text stmt 9 attempt.external_id;
+    bind_opt_text stmt 10 attempt.external_url;
+    bind_opt_text stmt 11 attempt.error;
+    bind_text stmt 12 attempt.created_at;
+    bind_text stmt 13 attempt.updated_at;
+    bind_opt_text stmt 14 attempt.started_at;
+    bind_opt_text stmt 15 attempt.finished_at;
     step_done stmt)
 
 let insert_evidence t (e : evidence_item) =
@@ -425,6 +508,25 @@ let row_to_approval stmt : approval =
     created_at = text_col stmt 5;
   }
 
+let row_to_writeback_attempt stmt : writeback_attempt =
+  {
+    id = text_col stmt 0;
+    action_id = text_col stmt 1;
+    approval_id = text_col stmt 2;
+    payload_hash = text_col stmt 3;
+    target_kind = text_col stmt 4;
+    target_ref = text_col stmt 5;
+    marker = text_col stmt 6;
+    status = writeback_status_of_string (text_col stmt 7);
+    external_id = opt_text_col stmt 8;
+    external_url = opt_text_col stmt 9;
+    error = opt_text_col stmt 10;
+    created_at = text_col stmt 11;
+    updated_at = text_col stmt 12;
+    started_at = opt_text_col stmt 13;
+    finished_at = opt_text_col stmt 14;
+  }
+
 let row_to_work_request_identity stmt : work_request_identity =
   {
     identity_key = text_col stmt 0;
@@ -673,6 +775,180 @@ let get_latest_approval_for_action t action_id =
     | S.Rc.DONE -> None
     | rc -> fail_sql "SQLite get_latest_approval_for_action failed" rc)
 
+let writeback_attempt_columns =
+  "id, action_id, approval_id, payload_hash, target_kind, target_ref, marker, \
+   status, external_id, external_url, error, created_at, updated_at, \
+   started_at, finished_at"
+
+let get_writeback_attempt t attempt_id =
+  with_stmt t
+    ("SELECT " ^ writeback_attempt_columns
+     ^ " FROM writeback_attempts WHERE id = ?")
+    (fun stmt ->
+      bind_text stmt 1 attempt_id;
+      match S.step stmt with
+      | S.Rc.ROW -> Some (row_to_writeback_attempt stmt)
+      | S.Rc.DONE -> None
+      | rc -> fail_sql "SQLite get_writeback_attempt failed" rc)
+
+let get_active_writeback_attempt_for_action t action_id =
+  with_stmt t
+    ("SELECT " ^ writeback_attempt_columns
+     ^ " FROM writeback_attempts WHERE action_id = ? \
+        AND status IN ('prepared', 'in_flight', 'unknown') \
+        ORDER BY created_at DESC, rowid DESC LIMIT 1")
+    (fun stmt ->
+      bind_text stmt 1 action_id;
+      match S.step stmt with
+      | S.Rc.ROW -> Some (row_to_writeback_attempt stmt)
+      | S.Rc.DONE -> None
+      | rc -> fail_sql "SQLite get_active_writeback_attempt failed" rc)
+
+let list_writeback_attempts_by_request t request_id =
+  with_stmt t
+    ("SELECT " ^ writeback_attempt_columns
+     ^ " FROM writeback_attempts WHERE action_id IN \
+        (SELECT id FROM proposed_actions WHERE request_id = ?) \
+        ORDER BY created_at ASC, rowid ASC")
+    (fun stmt ->
+      bind_text stmt 1 request_id;
+      collect_rows stmt row_to_writeback_attempt)
+
+let mark_writeback_in_flight t attempt_id =
+  let now = Time.now_iso () in
+  with_stmt t {|
+    UPDATE writeback_attempts
+    SET status = 'in_flight', error = NULL, updated_at = ?, started_at = ?
+    WHERE id = ? AND status = 'prepared'
+  |} (fun stmt ->
+    bind_text stmt 1 now;
+    bind_text stmt 2 now;
+    bind_text stmt 3 attempt_id;
+    step_done stmt)
+
+let claim_writeback_reconciliation t attempt_id =
+  with_stmt t {|
+    UPDATE writeback_attempts
+    SET status = 'in_flight', error = NULL, updated_at = ?
+    WHERE id = ? AND status = 'unknown'
+  |} (fun stmt ->
+    bind_text stmt 1 (Time.now_iso ());
+    bind_text stmt 2 attempt_id;
+    step_done stmt;
+    S.changes t.db = 1)
+
+let mark_writeback_confirmed t attempt_id ~external_id ~external_url =
+  let now = Time.now_iso () in
+  with_stmt t {|
+    UPDATE writeback_attempts
+    SET status = 'confirmed', external_id = ?, external_url = ?, error = NULL,
+        updated_at = ?, finished_at = ?
+    WHERE id = ? AND status IN ('in_flight', 'unknown')
+  |} (fun stmt ->
+    bind_text stmt 1 external_id;
+    bind_text stmt 2 external_url;
+    bind_text stmt 3 now;
+    bind_text stmt 4 now;
+    bind_text stmt 5 attempt_id;
+    step_done stmt)
+
+let mark_writeback_unknown t attempt_id error =
+  with_stmt t {|
+    UPDATE writeback_attempts
+    SET status = 'unknown', error = ?, updated_at = ?
+    WHERE id = ? AND status IN ('in_flight', 'unknown')
+  |} (fun stmt ->
+    bind_text stmt 1 error;
+    bind_text stmt 2 (Time.now_iso ());
+    bind_text stmt 3 attempt_id;
+    step_done stmt)
+
+let mark_writeback_failed_before_send t attempt_id error =
+  let now = Time.now_iso () in
+  with_stmt t {|
+    UPDATE writeback_attempts
+    SET status = 'failed_before_send', error = ?, updated_at = ?, finished_at = ?
+    WHERE id = ? AND status = 'in_flight'
+  |} (fun stmt ->
+    bind_text stmt 1 error;
+    bind_text stmt 2 now;
+    bind_text stmt 3 now;
+    bind_text stmt 4 attempt_id;
+    step_done stmt)
+
+let mark_writeback_abandoned t attempt_id =
+  let now = Time.now_iso () in
+  with_stmt t {|
+    UPDATE writeback_attempts
+    SET status = 'abandoned', updated_at = ?, finished_at = ?
+    WHERE id = ? AND status = 'unknown'
+  |} (fun stmt ->
+    bind_text stmt 1 now;
+    bind_text stmt 2 now;
+    bind_text stmt 3 attempt_id;
+    step_done stmt)
+
+let recover_interrupted_writebacks t =
+  with_transaction t (fun () ->
+    let now = Time.now_iso () in
+    with_stmt t {|
+      UPDATE proposed_actions SET status = ?, updated_at = ?
+      WHERE id IN (
+        SELECT action_id FROM writeback_attempts WHERE status = 'prepared'
+      )
+    |} (fun stmt ->
+      bind_text stmt 1 (action_status_to_string ActionApproved);
+      bind_text stmt 2 now;
+      step_done stmt);
+    with_stmt t {|
+      UPDATE work_requests SET status = ?, updated_at = ?
+      WHERE id IN (
+        SELECT request_id FROM proposed_actions WHERE id IN (
+          SELECT action_id FROM writeback_attempts WHERE status = 'prepared'
+        )
+      )
+    |} (fun stmt ->
+      bind_text stmt 1 (request_status_to_string Approved);
+      bind_text stmt 2 now;
+      step_done stmt);
+    with_stmt t {|
+      UPDATE writeback_attempts
+      SET status = 'failed_before_send', error = 'recovered_before_send',
+          updated_at = ?, finished_at = ?
+      WHERE status = 'prepared'
+    |} (fun stmt ->
+      bind_text stmt 1 now;
+      bind_text stmt 2 now;
+      step_done stmt);
+    with_stmt t {|
+      UPDATE proposed_actions SET status = ?, updated_at = ?
+      WHERE id IN (
+        SELECT action_id FROM writeback_attempts WHERE status = 'in_flight'
+      )
+    |} (fun stmt ->
+      bind_text stmt 1 (action_status_to_string ActionExecuting);
+      bind_text stmt 2 now;
+      step_done stmt);
+    with_stmt t {|
+      UPDATE work_requests SET status = ?, updated_at = ?
+      WHERE id IN (
+        SELECT request_id FROM proposed_actions WHERE id IN (
+          SELECT action_id FROM writeback_attempts WHERE status = 'in_flight'
+        )
+      )
+    |} (fun stmt ->
+      bind_text stmt 1 (request_status_to_string Executing);
+      bind_text stmt 2 now;
+      step_done stmt);
+    with_stmt t {|
+      UPDATE writeback_attempts
+      SET status = 'unknown', error = 'recovered_in_flight_after_restart',
+          updated_at = ?
+      WHERE status = 'in_flight'
+    |} (fun stmt ->
+      bind_text stmt 1 now;
+      step_done stmt))
+
 let request_detail t request_id =
   match get_work_request t request_id with
   | None -> None
@@ -680,6 +956,7 @@ let request_detail t request_id =
       Some {
         request;
         actions = list_actions_by_request t request_id;
+        writeback_attempts = list_writeback_attempts_by_request t request_id;
         evidence = list_evidence_by_request t request_id;
         timeline = list_timeline_by_request t request_id;
       }

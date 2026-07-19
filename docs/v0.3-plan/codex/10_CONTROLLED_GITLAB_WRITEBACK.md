@@ -116,6 +116,7 @@ unknown-result safety, marker reconciliation, and explicit abandon.
 cd core && dune build
 cd core && dune runtest
 swift build --package-path ui/macos/PharosApp
+swift test --package-path ui/macos/PharosApp
 ```
 
 Fake tests must prove every policy negative calls the client zero times,

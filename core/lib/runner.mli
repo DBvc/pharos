@@ -69,3 +69,47 @@ val execute_local :
   Store.t ->
   string ->
   (Domain.proposed_action, Policy.policy_error) result
+
+val start_writeback :
+  Store.t -> string -> (Policy.writeback_operation, Policy.policy_error) result
+
+val writeback_request : Policy.writeback_operation -> Gitlab_write.request
+
+val finish_writeback :
+  Store.t ->
+  Policy.writeback_operation ->
+  Gitlab_write.delivery_outcome ->
+  ((Domain.proposed_action * Domain.writeback_attempt), Policy.policy_error)
+  result
+
+val execute_approved :
+  client:Gitlab_write.client ->
+  Store.t ->
+  string ->
+  ((Domain.proposed_action * Domain.writeback_attempt), Policy.policy_error)
+  result
+
+val prepare_reconciliation :
+  Store.t -> string -> (Policy.writeback_operation, Policy.policy_error) result
+
+val finish_reconciliation :
+  Store.t ->
+  Policy.writeback_operation ->
+  Gitlab_write.reconciliation_outcome ->
+  ((Domain.proposed_action * Domain.writeback_attempt), Policy.policy_error)
+  result
+
+val reconcile_writeback :
+  client:Gitlab_write.client ->
+  Store.t ->
+  string ->
+  ((Domain.proposed_action * Domain.writeback_attempt), Policy.policy_error)
+  result
+
+val abandon_writeback :
+  Store.t ->
+  string ->
+  ((Domain.proposed_action * Domain.writeback_attempt), Policy.policy_error)
+  result
+
+val recover_interrupted_writebacks : Store.t -> unit

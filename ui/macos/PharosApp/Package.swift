@@ -11,6 +11,11 @@ let package = Package(
         .executableTarget(
             name: "PharosApp",
             path: "Sources/PharosApp"
+        ),
+        .testTarget(
+            name: "PharosAppTests",
+            dependencies: ["PharosApp"],
+            path: "Tests/PharosAppTests"
         )
     ]
 )

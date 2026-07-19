@@ -109,6 +109,10 @@ let review_input body =
 
 let policy_error_response = function
   | Policy.StaleAction _ -> error_response ~status:`Conflict "stale_action"
+  | Policy.WritebackAttemptNotFound _ ->
+      error_response ~status:`Not_Found "writeback_attempt_not_found"
+  | Policy.WritebackAttemptActive _ | Policy.WritebackAttemptStateMismatch _ ->
+      error_response ~status:`Conflict "writeback_attempt_conflict"
   | error -> error_response (Policy.error_to_string error)
 
 let approve store req =
@@ -167,6 +171,52 @@ let execute_local store req =
       json (`Assoc [ ("action", Domain.proposed_action_to_yojson action) ])
   | Error error -> policy_error_response error
 
+let execute_approved store gitlab_client req =
+  let id = Dream.param req "id" in
+  match Runner.start_writeback store id with
+  | Error error -> policy_error_response error
+  | Ok operation ->
+      Lwt_preemptive.detach
+        (fun () ->
+          try gitlab_client.Gitlab_write.post (Runner.writeback_request operation)
+          with _ -> Gitlab_write.Unknown "writeback_client_exception")
+        ()
+      >>= fun outcome ->
+      begin
+        match Runner.finish_writeback store operation outcome with
+        | Ok (action, attempt) ->
+            json (Domain.writeback_attempt_response_to_yojson action attempt)
+        | Error error -> policy_error_response error
+      end
+
+let reconcile_writeback store gitlab_client req =
+  let id = Dream.param req "id" in
+  match Runner.prepare_reconciliation store id with
+  | Error error -> policy_error_response error
+  | Ok operation ->
+      Lwt_preemptive.detach
+        (fun () ->
+          try
+            gitlab_client.Gitlab_write.reconcile
+              (Runner.writeback_request operation)
+          with _ ->
+            Gitlab_write.Reconciliation_unknown "reconciliation_client_exception")
+        ()
+      >>= fun outcome ->
+      begin
+        match Runner.finish_reconciliation store operation outcome with
+        | Ok (action, attempt) ->
+            json (Domain.writeback_attempt_response_to_yojson action attempt)
+        | Error error -> policy_error_response error
+      end
+
+let abandon_writeback store req =
+  let id = Dream.param req "id" in
+  match Runner.abandon_writeback store id with
+  | Ok (action, attempt) ->
+      json (Domain.writeback_attempt_response_to_yojson action attempt)
+  | Error error -> policy_error_response error
+
 let is_v0_target target =
   let path =
     match String.index_opt target '?' with
@@ -175,7 +225,7 @@ let is_v0_target target =
   in
   path = "/v0" || String.starts_with ~prefix:"/v0/" path
 
-let routes store capability_token =
+let routes ?(gitlab_client = Gitlab_write.real_client) store capability_token =
   let router =
     Dream.router
       [
@@ -194,6 +244,12 @@ let routes store capability_token =
         Dream.post "/v0/actions/:id/edit-and-approve" (edit_and_approve store);
         Dream.post "/v0/actions/:id/reject" (reject store);
         Dream.post "/v0/actions/:id/execute-local" (execute_local store);
+        Dream.post "/v0/actions/:id/execute-approved"
+          (execute_approved store gitlab_client);
+        Dream.post "/v0/writeback-attempts/:id/reconcile"
+          (reconcile_writeback store gitlab_client);
+        Dream.post "/v0/writeback-attempts/:id/abandon"
+          (abandon_writeback store);
       ]
   in
   fun req ->

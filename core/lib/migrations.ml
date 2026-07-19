@@ -62,6 +62,30 @@ let run db =
     )
   |};
   exec db {|
+    CREATE TABLE IF NOT EXISTS writeback_attempts (
+      id TEXT PRIMARY KEY,
+      action_id TEXT NOT NULL,
+      approval_id TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      target_kind TEXT NOT NULL,
+      target_ref TEXT NOT NULL,
+      marker TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (
+        status IN (
+          'prepared', 'in_flight', 'confirmed', 'unknown',
+          'failed_before_send', 'abandoned'
+        )
+      ),
+      external_id TEXT,
+      external_url TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      started_at TEXT,
+      finished_at TEXT
+    )
+  |};
+  exec db {|
     CREATE TABLE IF NOT EXISTS evidence_items (
       id TEXT PRIMARY KEY,
       request_id TEXT NOT NULL,
@@ -122,6 +146,12 @@ let run db =
   |};
   exec db "CREATE INDEX IF NOT EXISTS idx_work_requests_status ON work_requests(status)";
   exec db "CREATE INDEX IF NOT EXISTS idx_actions_request_id ON proposed_actions(request_id)";
+  exec db "CREATE INDEX IF NOT EXISTS idx_writeback_attempts_action_id ON writeback_attempts(action_id)";
+  exec db {|
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_writeback_attempts_one_active
+    ON writeback_attempts(action_id)
+    WHERE status IN ('prepared', 'in_flight', 'unknown')
+  |};
   exec db "CREATE INDEX IF NOT EXISTS idx_evidence_request_id ON evidence_items(request_id)";
   exec db "CREATE INDEX IF NOT EXISTS idx_timeline_request_id ON timeline_events(request_id)";
   exec db "CREATE INDEX IF NOT EXISTS idx_work_request_identities_request_id ON work_request_identities(request_id)"

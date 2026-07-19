@@ -66,7 +66,11 @@ final class AppState: ObservableObject {
                 expectedPayloadHash: action.payloadHash
             )
             if executeAfterApproval {
-                _ = try await api.executeLocal(actionId: action.id)
+                if action.targetKind.hasPrefix("pharos.") {
+                    _ = try await api.executeLocal(actionId: action.id)
+                } else {
+                    _ = try await api.executeApproved(actionId: action.id)
+                }
             }
             await refreshCurrent()
         } catch {
@@ -82,7 +86,11 @@ final class AppState: ObservableObject {
                 expectedPayloadHash: action.payloadHash
             )
             if executeAfterApproval {
-                _ = try await api.executeLocal(actionId: action.id)
+                if action.targetKind.hasPrefix("pharos.") {
+                    _ = try await api.executeLocal(actionId: action.id)
+                } else {
+                    _ = try await api.executeApproved(actionId: action.id)
+                }
             }
             await refreshCurrent()
         } catch {
@@ -99,6 +107,33 @@ final class AppState: ObservableObject {
             await refreshCurrent()
         } catch {
             await handleActionMutationError(error)
+        }
+    }
+
+    func executeApproved(_ action: ProposedAction) async {
+        do {
+            _ = try await api.executeApproved(actionId: action.id)
+            await refreshCurrent()
+        } catch {
+            errorMessage = readable(error)
+        }
+    }
+
+    func reconcile(_ attempt: WritebackAttempt) async {
+        do {
+            _ = try await api.reconcileWriteback(attemptId: attempt.id)
+            await refreshCurrent()
+        } catch {
+            errorMessage = readable(error)
+        }
+    }
+
+    func abandon(_ attempt: WritebackAttempt) async {
+        do {
+            _ = try await api.abandonWriteback(attemptId: attempt.id)
+            await refreshCurrent()
+        } catch {
+            errorMessage = readable(error)
         }
     }
 

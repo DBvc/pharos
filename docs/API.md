@@ -248,6 +248,7 @@ Response shape:
 {
   "request": {},
   "actions": [],
+  "writeback_attempts": [],
   "evidence": [],
   "timeline": []
 }
@@ -311,7 +312,80 @@ preserved; that requires a separately planned migration.
 
 ## POST /v0/actions/:id/execute-local
 
-Executes a local Pharos action after policy verification. External writeback routes will be added in Milestone 3.
+Executes a local Pharos action after policy verification. GitLab comment actions
+must use `execute-approved`; the local executor continues to reject external
+targets.
+
+## POST /v0/actions/:id/execute-approved
+
+Starts the approved GitLab MR or issue comment represented by the current
+action. The body is `{}`. Before transport, core re-reads the action, latest
+approval, request provenance, and persisted source settings and validates the
+complete v2 payload hash, L3 risk, target allowlist, nonblank body of at most
+8000 characters, valid GitLab scope, and `enabled && write_enabled`.
+
+Response:
+
+```json
+{
+  "action": {"id":"act_...","status":"executed"},
+  "attempt": {
+    "id":"wba_...",
+    "action_id":"act_...",
+    "approval_id":"appr_...",
+    "payload_hash":"sha256:...",
+    "target_kind":"gitlab.mr.comment",
+    "target_ref":"project_id=123;mr_iid=456",
+    "marker":"<!-- pharos-writeback:wba_...:sha256:... -->",
+    "status":"confirmed",
+    "external_id":"note_123",
+    "external_url":"https://gitlab.example/group/project/-/merge_requests/456#note_123",
+    "error":null,
+    "created_at":"...",
+    "updated_at":"...",
+    "started_at":"...",
+    "finished_at":"..."
+  }
+}
+```
+
+`writeback_attempts` is the delivery source of truth. Only failures known
+before the HTTP child starts become `failed_before_send` and may be retried by
+calling this route again. Any ambiguous post-start result becomes `unknown`;
+calling `execute-approved` again must not issue a second POST.
+
+The daemon and delivery CLI commands share one advisory delivery-owner lock
+derived from the SQLite path. Ownership is established before opening SQLite
+or recovering interrupted attempts and is held for the process operation;
+lock contention fails before writeback state is changed.
+
+The real client uses `PHAROS_GITLAB_BASE_URL` and `PHAROS_GITLAB_TOKEN`, accepts
+only HTTPS, and never persists either credential. GitLab
+`scope_json.projects` remains a read-time watched-project set and is not a
+write target allowlist; write target authority comes from stable request
+provenance.
+
+## POST /v0/writeback-attempts/:id/reconcile
+
+Reconciles an `unknown` attempt by listing a bounded number of GitLab Notes
+pages and matching the complete stable marker exactly. A match changes the
+attempt to `confirmed` without another POST. No match is not proof of
+non-delivery and leaves the attempt `unknown`.
+
+Before contacting GitLab, reconciliation atomically claims the attempt by
+moving `unknown` to `in_flight`. Concurrent reconcile and abandon calls then
+fail closed. Marker-not-found and reconciliation errors restore `unknown`, as
+does startup recovery if the owner stops while holding the claim.
+
+The response has the same `action` and `attempt` shape as
+`execute-approved`.
+
+## POST /v0/writeback-attempts/:id/abandon
+
+Explicitly abandons an `unknown` attempt without contacting GitLab. The attempt
+becomes `abandoned`, the action returns to `proposed`, and the request returns
+to `ready_for_review`. A fresh approval is required before any new attempt.
+There is no automatic retry.
 
 ## Review CLI
 
@@ -320,4 +394,7 @@ Direct local CLI review commands also require the hash displayed to the caller:
 ```bash
 pharos approve <action-id> <expected-payload-hash>
 pharos reject <action-id> <expected-payload-hash>
+pharos execute-approved <action-id>
+pharos reconcile-writeback <attempt-id>
+pharos abandon-writeback <attempt-id>
 ```

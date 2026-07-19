@@ -23,6 +23,10 @@
  (libraries pharos_core yojson))
 
 (test
+ (name gitlab_writeback_test)
+ (libraries pharos_core yojson))
+
+(test
  (name skill_output_test)
  (libraries pharos_core yojson))
 
