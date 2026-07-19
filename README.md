@@ -55,9 +55,11 @@ dune build
 ```
 
 This unreleased v0.3 build replaces the old 32-character MD5 action identity
-with payload hash v2. There is no data migration for development databases. If
-`var/pharos.dev.sqlite` was created by a pre-v2 build, stop the daemon and
-rebuild the disposable database before continuing:
+with payload hash v2 and binds GitLab objects to a canonical instance
+fingerprint. There is no data migration for development databases. If
+`var/pharos.dev.sqlite` was created by a pre-v2 build or contains legacy GitLab
+identities without `instance/<sha256>`, stop the daemon and rebuild the
+disposable database before continuing:
 
 ```bash
 rm -f ../var/pharos.dev.sqlite

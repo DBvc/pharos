@@ -98,17 +98,25 @@ unknown-result safety, marker reconciliation, and explicit abandon.
    identity, and source settings and validates hash/risk/allowlist/body/target,
    valid v2 payload hashes, valid source policy, and
    `enabled && write_enabled` through Task 10a2's `Source_settings` owner.
-3. Atomically create one active prepared attempt before network work.
-4. Run the GitLab client outside SQLite transactions and Dream's event loop.
-5. Classify only pre-spawn certainty as `failed_before_send`; all ambiguous
+3. Canonicalize the HTTPS GitLab origin plus optional relative root once, bind
+   its domain-separated SHA-256 instance id into source external identity and
+   action target provenance, and reject runtime instance drift before curl.
+4. Atomically create one active prepared attempt before network work.
+5. Run the GitLab client outside SQLite transactions and Dream's event loop.
+6. Classify only pre-spawn certainty as `failed_before_send`; all ambiguous
    post-start outcomes become `unknown`.
-6. Confirm successful delivery with external id/url, timeline, evidence, and
+7. Confirm successful delivery only when note id, project id, noteable type,
+   and noteable IID match the approved target; then write timeline/evidence and
    metric.
-7. Bind markers to the complete v2 payload hash and reconcile unknown attempts
+8. Bind markers to the complete v2 payload hash and reconcile unknown attempts
    through exact stable-marker matching with bounded GitLab Notes pagination.
-8. Add capability-authenticated explicit abandon; require fresh review and
+9. Re-read source settings and `effective_write` before reconciliation GETs.
+10. Add capability-authenticated explicit abandon; require fresh review and
    approval afterward.
-9. Add Swift attempt state and core execution UI without direct GitLab calls.
+11. Add Swift attempt state and core execution UI without direct GitLab calls;
+    only explicit GitLab comment kinds auto-execute, and failed mutations
+    refresh durable state.
+12. Reject delivery ownership for hard-linked SQLite files.
 
 ### Acceptance
 
@@ -126,6 +134,9 @@ during a slow client.
 
 Disabled source, write-disabled source, and invalid persisted scope are policy
 negatives. `scope_json.projects` is not a write target membership allowlist.
+Legacy GitLab identities without an instance id are not executable. Because
+v0.3 is unreleased, disposable development databases are rebuilt rather than
+migrated or silently rewritten.
 
 ### Non-goals
 

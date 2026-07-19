@@ -158,13 +158,13 @@ struct ProposedActionView: View {
             }
             LabeledContent("Target system", value: action.targetKind)
             LabeledContent("Target object", value: action.targetRef)
-            LabeledContent("External write", value: isLocalTarget ? "no" : "yes")
+            LabeledContent("External write", value: action.executionRoute == .local ? "no" : "yes")
             LabeledContent("Risk", value: action.risk.label)
             if let latestAttempt {
                 LabeledContent("Delivery", value: latestAttempt.status.label)
                 if let externalURL = latestAttempt.externalUrl,
                    let url = URL(string: externalURL) {
-                    Link("Open delivered comment", destination: url)
+                    Link("Open delivery API record", destination: url)
                 }
             }
             TextEditor(text: $editedBody)
@@ -185,7 +185,7 @@ struct ProposedActionView: View {
                     Button("Reject", role: .destructive) {
                         Task { await appState.reject(action) }
                     }
-                } else if !isLocalTarget && action.status == .approved {
+                } else if action.executionRoute == .gitlabWriteback && action.status == .approved {
                     Button(latestAttempt?.status == .failedBeforeSend ? "Retry send" : "Send approved comment") {
                         Task { await appState.executeApproved(action) }
                     }
@@ -204,15 +204,15 @@ struct ProposedActionView: View {
         }
     }
 
-    private var isLocalTarget: Bool {
-        action.targetKind.hasPrefix("pharos.")
-    }
-
     private var latestAttempt: WritebackAttempt? {
         attempts.last
     }
 
     private var approveButtonTitle: String {
-        isLocalTarget ? "Approve and complete locally" : "Approve and send"
+        switch action.executionRoute {
+        case .local: return "Approve and complete locally"
+        case .gitlabWriteback: return "Approve and send"
+        case .approvalOnly: return "Approve"
+        }
     }
 }

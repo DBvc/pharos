@@ -75,7 +75,7 @@ Request:
 ```json
 {
   "kind": "gitlab",
-  "external_id": "gitlab:project/123:mr/456",
+  "external_id": "gitlab:instance/e3faea18935d7af1aff3f5d92e5546931721e04a207eff114fe3e9b621956d58:project/123:mr/456",
   "actor": "alice",
   "title": "Review requested: billing retry logic",
   "body": "Alice requested your review on MR !456.",
@@ -305,8 +305,9 @@ Each field is encoded as an unsigned 8-byte big-endian byte length followed by
 its raw bytes. Approval and execution fail closed for legacy 32-character MD5
 action hashes; rejection may still be used to dispose of a legacy proposal.
 
-There is no schema or data migration for pre-v2 development databases in this
-unreleased version. Stop the daemon and rebuild disposable dev state with
+There is no schema or data migration for pre-v2 development databases or legacy
+GitLab identities without an instance fingerprint in this unreleased version.
+Stop the daemon and rebuild disposable dev state with
 `rm -f var/pharos.dev.sqlite`. Do not reset a database whose data must be
 preserved; that requires a separately planned migration.
 
@@ -335,11 +336,11 @@ Response:
     "approval_id":"appr_...",
     "payload_hash":"sha256:...",
     "target_kind":"gitlab.mr.comment",
-    "target_ref":"project_id=123;mr_iid=456",
+    "target_ref":"instance=e3faea18935d7af1aff3f5d92e5546931721e04a207eff114fe3e9b621956d58;project_id=123;mr_iid=456",
     "marker":"<!-- pharos-writeback:wba_...:sha256:... -->",
     "status":"confirmed",
     "external_id":"note_123",
-    "external_url":"https://gitlab.example/group/project/-/merge_requests/456#note_123",
+    "external_url":"https://gitlab.example/api/v4/projects/123/merge_requests/456/notes/123",
     "error":null,
     "created_at":"...",
     "updated_at":"...",
@@ -357,10 +358,16 @@ calling `execute-approved` again must not issue a second POST.
 The daemon and delivery CLI commands share one advisory delivery-owner lock
 derived from the SQLite path. Ownership is established before opening SQLite
 or recovering interrupted attempts and is held for the process operation;
-lock contention fails before writeback state is changed.
+lock contention fails before writeback state is changed. Existing database
+files with multiple hard links are rejected because path locks cannot prove a
+single delivery owner for them.
 
-The real client uses `PHAROS_GITLAB_BASE_URL` and `PHAROS_GITLAB_TOKEN`, accepts
-only HTTPS, and never persists either credential. GitLab
+The real client uses `PHAROS_GITLAB_BASE_URL` and `PHAROS_GITLAB_TOKEN`. The
+base URL is canonicalized as an HTTPS origin plus optional relative root; it
+must not contain userinfo, query, fragment, or control characters. A
+domain-separated SHA-256 instance id is persisted in source/action provenance,
+and runtime delivery fails before curl when the configured instance differs
+from the approved target. Neither the base URL nor token is persisted. GitLab
 `scope_json.projects` remains a read-time watched-project set and is not a
 write target allowlist; write target authority comes from stable request
 provenance.

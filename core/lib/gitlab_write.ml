@@ -1,6 +1,7 @@
-type object_kind = MergeRequest | Issue
+type object_kind = Gitlab_identity.object_kind = MergeRequest | Issue
 
-type target = {
+type target = Gitlab_identity.target = {
+  instance_id : string;
   project_id : int;
   object_kind : object_kind;
   iid : int;
@@ -13,7 +14,6 @@ type post_result = {
 
 type request = {
   target : target;
-  source_url : string option;
   body : string;
   marker : string;
 }
@@ -35,6 +35,7 @@ type client = {
 
 type config = {
   base_url : string;
+  instance_id : string;
   token : string;
 }
 
@@ -60,15 +61,6 @@ let normalize_optional_text = function
       let trimmed = String.trim value in
       if trimmed = "" then None else Some trimmed
 
-let strip_trailing_slashes value =
-  let rec loop current =
-    let length = String.length current in
-    if length > 0 && current.[length - 1] = '/' then
-      loop (String.sub current 0 (length - 1))
-    else current
-  in
-  loop value
-
 let has_header_control value =
   String.exists (function '\r' | '\n' -> true | _ -> false) value
 
@@ -76,86 +68,23 @@ let config_from_env () =
   match Sys.getenv_opt "PHAROS_GITLAB_BASE_URL" |> normalize_optional_text with
   | None -> Error "Missing PHAROS_GITLAB_BASE_URL"
   | Some base_url ->
-      let base_url = strip_trailing_slashes base_url in
-      if not (String.starts_with ~prefix:"https://" base_url) then
-        Error "PHAROS_GITLAB_BASE_URL must use https for writeback"
-      else
+      begin match Gitlab_identity.instance_of_base_url base_url with
+      | Error error -> Error error
+      | Ok instance ->
         match Sys.getenv_opt "PHAROS_GITLAB_TOKEN" |> normalize_optional_text with
         | None -> Error "Missing PHAROS_GITLAB_TOKEN"
         | Some token when has_header_control token ->
             Error "PHAROS_GITLAB_TOKEN contains invalid control characters"
-        | Some token -> Ok { base_url; token }
-
-let parse_positive_int label value =
-  match int_of_string_opt value with
-  | Some number when number > 0 -> Ok number
-  | _ -> Error ("Invalid positive integer for " ^ label)
-
-let value_after_prefix prefix value =
-  if String.starts_with ~prefix value then
-    Some
-      (String.sub value (String.length prefix)
-         (String.length value - String.length prefix))
-  else None
+        | Some token ->
+            Ok { base_url = instance.base_url; instance_id = instance.id; token }
+      end
 
 let parse_target target_kind target_ref =
-  match (target_kind, String.split_on_char ';' target_ref) with
-  | "gitlab.mr.comment", [ project; mr ] ->
-      begin
-        match
-          ( value_after_prefix "project_id=" project,
-            value_after_prefix "mr_iid=" mr )
-        with
-        | Some project_id, Some iid ->
-            let* project_id = parse_positive_int "project_id" project_id in
-            let* iid = parse_positive_int "mr_iid" iid in
-            Ok { project_id; object_kind = MergeRequest; iid }
-        | _ -> Error "Invalid canonical GitLab MR target_ref"
-      end
-  | "gitlab.issue.comment", [ project; issue ] ->
-      begin
-        match
-          ( value_after_prefix "project_id=" project,
-            value_after_prefix "issue_iid=" issue )
-        with
-        | Some project_id, Some iid ->
-            let* project_id = parse_positive_int "project_id" project_id in
-            let* iid = parse_positive_int "issue_iid" iid in
-            Ok { project_id; object_kind = Issue; iid }
-        | _ -> Error "Invalid canonical GitLab issue target_ref"
-      end
-  | "gitlab.mr.comment", _ -> Error "Invalid canonical GitLab MR target_ref"
-  | "gitlab.issue.comment", _ ->
-      Error "Invalid canonical GitLab issue target_ref"
-  | _ -> Error ("Unsupported GitLab writeback target kind: " ^ target_kind)
+  Gitlab_identity.parse_target_ref ~target_kind target_ref
 
-let parse_source_external_id value =
-  match String.split_on_char ':' value with
-  | [ "gitlab"; project; object_ref ] ->
-      begin
-        match value_after_prefix "project/" project with
-        | None -> Error "Invalid GitLab source project identity"
-        | Some project_id ->
-            let* project_id =
-              parse_positive_int "source project id" project_id
-            in
-            begin
-              match
-                ( value_after_prefix "mr/" object_ref,
-                  value_after_prefix "issue/" object_ref )
-              with
-              | Some iid, None ->
-                  let* iid = parse_positive_int "source MR iid" iid in
-                  Ok { project_id; object_kind = MergeRequest; iid }
-              | None, Some iid ->
-                  let* iid = parse_positive_int "source issue iid" iid in
-                  Ok { project_id; object_kind = Issue; iid }
-              | _ -> Error "Invalid GitLab source object identity"
-            end
-      end
-  | _ -> Error "Invalid GitLab source external_id"
+let parse_source_external_id = Gitlab_identity.parse_external_id
 
-let target_matches_source target source = target = source
+let target_matches_source = Gitlab_identity.matches
 
 let marker ~attempt_id ~payload_hash =
   if not (Domain.payload_hash_is_v2 payload_hash) then
@@ -169,24 +98,7 @@ let marker ~attempt_id ~payload_hash =
 
 let body_with_marker ~body ~marker = body ^ "\n\n" ^ marker
 
-let percent_encode value =
-  let buffer = Buffer.create (String.length value) in
-  String.iter
-    (fun ch ->
-      match ch with
-      | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '-' | '_' | '.' | '~' ->
-          Buffer.add_char buffer ch
-      | _ ->
-          Buffer.add_string buffer (Printf.sprintf "%%%02X" (Char.code ch)))
-    value;
-  Buffer.contents buffer
-
-let endpoint_path target =
-  let project = percent_encode (string_of_int target.project_id) in
-  match target.object_kind with
-  | MergeRequest ->
-      Printf.sprintf "/projects/%s/merge_requests/%d/notes" project target.iid
-  | Issue -> Printf.sprintf "/projects/%s/issues/%d/notes" project target.iid
+let endpoint_path = Gitlab_identity.endpoint_path
 
 let curl_escape value =
   let buffer = Buffer.create (String.length value) in
@@ -306,68 +218,71 @@ let response_error response =
     | Unix.WSIGNALED signal | Unix.WSTOPPED signal ->
         Some (Printf.sprintf "GitLab request interrupted by signal %d" signal)
 
+let positive_response_int name json =
+  let invalid () = Error ("GitLab note response has invalid " ^ name) in
+  match Yojson.Safe.Util.member name json with
+  | `Int value when value > 0 -> Ok value
+  | `Intlit value | `String value ->
+      begin match int_of_string_opt value with
+      | Some number when number > 0 -> Ok number
+      | _ -> invalid ()
+      end
+  | _ -> invalid ()
+
 let response_id json =
   match Yojson.Safe.Util.member "id" json with
-  | `Int value -> Some (string_of_int value)
-  | `Intlit value | `String value -> normalize_optional_text (Some value)
-  | _ -> None
+  | `Int value when value > 0 -> Ok value
+  | `Intlit value | `String value ->
+      begin match int_of_string_opt value with
+      | Some number when number > 0 -> Ok number
+      | _ -> Error "GitLab note response has invalid note id"
+      end
+  | _ -> Error "GitLab note response is missing note id"
 
-let strip_query_and_fragment value =
-  let indexes =
-    [ String.index_opt value '?'; String.index_opt value '#' ]
-    |> List.filter_map Fun.id
-  in
-  match indexes with
-  | [] -> value
-  | first :: rest ->
-      let index = List.fold_left min first rest in
-      String.sub value 0 index
-
-let source_object_url ~base_url target source_url =
-  let base_url = strip_trailing_slashes base_url in
-  let source_url = strip_query_and_fragment source_url in
-  let target_suffix =
+let validate_note_target target json =
+  let* project_id = positive_response_int "project_id" json in
+  let* iid = positive_response_int "noteable_iid" json in
+  let expected_type =
     match target.object_kind with
-    | MergeRequest -> Printf.sprintf "/-/merge_requests/%d" target.iid
-    | Issue -> Printf.sprintf "/-/issues/%d" target.iid
+    | MergeRequest -> "MergeRequest"
+    | Issue -> "Issue"
   in
-  if
-    has_header_control source_url
-    || not (String.starts_with ~prefix:(base_url ^ "/") source_url)
-  then None
-  else
-    let path =
-      String.sub source_url (String.length base_url)
-        (String.length source_url - String.length base_url)
-    in
-    if
-      String.ends_with ~suffix:target_suffix path
-      && String.length path > String.length target_suffix
-    then Some source_url
-    else None
+  match Yojson.Safe.Util.member "noteable_type" json with
+  | `String value
+    when project_id = target.project_id && iid = target.iid
+         && value = expected_type ->
+      Ok ()
+  | _ -> Error "GitLab note response does not match the approved target"
 
-let fallback_external_url ~base_url ~target ~source_url ~note_id =
-  match Option.bind source_url (source_object_url ~base_url target) with
-  | Some object_url -> object_url ^ "#note_" ^ note_id
-  | None ->
-      strip_trailing_slashes base_url ^ "/api/v4" ^ endpoint_path target ^ "/"
-      ^ percent_encode note_id
+let post_result_of_note ~base_url ~(target : target) json =
+  let* instance = Gitlab_identity.instance_of_base_url base_url in
+  if instance.id <> target.instance_id then
+    Error "GitLab note response instance does not match the approved target"
+  else
+  let* () = validate_note_target target json in
+  let* id = response_id json in
+  let id = string_of_int id in
+  Ok
+    {
+      external_id = "note_" ^ id;
+      external_url =
+        instance.base_url ^ "/api/v4" ^ endpoint_path target ^ "/" ^ id;
+    }
 
 let result_from_note ~config ~request json =
-  match response_id json with
-  | None -> Error "GitLab note response is missing note id"
-  | Some id ->
-      let external_id = "note_" ^ id in
-      let external_url =
-        fallback_external_url ~base_url:config.base_url ~target:request.target
-          ~source_url:request.source_url ~note_id:id
-      in
-      Ok { external_id; external_url }
+  post_result_of_note ~base_url:config.base_url ~target:request.target json
+
+let config_matches_target (config : config) (target : target) =
+  if config.instance_id = target.instance_id then Ok ()
+  else Error "PHAROS_GITLAB_BASE_URL does not match the approved GitLab instance"
 
 let post request =
   match config_from_env () with
   | Error error -> Failed_before_send error
   | Ok config ->
+      begin match config_matches_target config request.target with
+      | Error error -> Failed_before_send error
+      | Ok () ->
       let url = config.base_url ^ "/api/v4" ^ endpoint_path request.target in
       let payload =
         `Assoc
@@ -402,6 +317,7 @@ let post request =
                   end
             end
       end
+      end
 
 let marker_is_exact_line body marker =
   String.split_on_char '\n' body |> List.exists (String.equal marker)
@@ -419,6 +335,9 @@ let reconcile request =
   match config_from_env () with
   | Error error -> Reconciliation_unknown error
   | Ok config ->
+      begin match config_matches_target config request.target with
+      | Error error -> Reconciliation_unknown error
+      | Ok () ->
       let rec page number =
         if number > reconciliation_page_limit then Marker_not_found
         else
@@ -462,5 +381,6 @@ let reconcile request =
               end
       in
       page 1
+      end
 
 let real_client = { post; reconcile }

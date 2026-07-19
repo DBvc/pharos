@@ -1,6 +1,6 @@
 {
   "kind": "gitlab",
-  "external_id": "gitlab:project/123:mr/456",
+  "external_id": "gitlab:instance/e3faea18935d7af1aff3f5d92e5546931721e04a207eff114fe3e9b621956d58:project/123:mr/456",
   "actor": "alice",
   "title": "Review requested: billing retry logic",
   "body": "Alice requested your review on MR !456. Pipeline is failing in retry policy tests.",

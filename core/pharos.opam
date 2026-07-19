@@ -15,6 +15,7 @@ depends: [
   "digestif"
   "yojson"
   "sqlite3"
+  "uri"
   "uuidm"
   "lwt"
 ]

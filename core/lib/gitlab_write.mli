@@ -1,6 +1,7 @@
-type object_kind = MergeRequest | Issue
+type object_kind = Gitlab_identity.object_kind = MergeRequest | Issue
 
-type target = {
+type target = Gitlab_identity.target = {
+  instance_id : string;
   project_id : int;
   object_kind : object_kind;
   iid : int;
@@ -13,7 +14,6 @@ type post_result = {
 
 type request = {
   target : target;
-  source_url : string option;
   body : string;
   marker : string;
 }
@@ -39,10 +39,6 @@ val target_matches_source : target -> target -> bool
 val marker : attempt_id:string -> payload_hash:string -> (string, string) result
 val body_with_marker : body:string -> marker:string -> string
 val marker_is_exact_line : string -> string -> bool
-val fallback_external_url :
-  base_url:string ->
-  target:target ->
-  source_url:string option ->
-  note_id:string ->
-  string
+val post_result_of_note :
+  base_url:string -> target:target -> Yojson.Safe.t -> (post_result, string) result
 val real_client : client

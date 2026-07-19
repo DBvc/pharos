@@ -4,6 +4,7 @@ let ( let* ) value f = Result.bind value f
 
 type config = {
   base_url : string;
+  instance_id : string;
   token : string;
   username : string option;
   project_ids : string list;
@@ -63,8 +64,12 @@ let int_member name json =
 
 let id_member name json =
   match Yojson.Safe.Util.member name json with
-  | `Int value -> Some (string_of_int value)
-  | `Intlit value | `String value -> normalize_optional_text (Some value)
+  | `Int value when value > 0 -> Some (string_of_int value)
+  | `Intlit value | `String value ->
+      begin match int_of_string_opt value with
+      | Some number when number > 0 -> Some (string_of_int number)
+      | _ -> None
+      end
   | _ -> None
 
 let bool_member name json =
@@ -237,7 +242,7 @@ let redacted_raw_subset mr pipeline =
   ]
   |> Yojson.Safe.to_string
 
-let normalize ?pipeline_status:latest_pipeline mr discussions =
+let normalize ~instance_id ?pipeline_status:latest_pipeline mr discussions =
   let pipeline =
     match latest_pipeline with
     | Some _ as value -> value
@@ -282,7 +287,15 @@ let normalize ?pipeline_status:latest_pipeline mr discussions =
     signal = {
       kind = GitLab;
       external_id =
-        Some (Printf.sprintf "gitlab:project/%s:mr/%d" mr.project_id mr.iid);
+        int_of_string_opt mr.project_id
+        |> Option.map (fun project_id ->
+               Gitlab_identity.external_id
+                 {
+                   instance_id;
+                   project_id;
+                   object_kind = MergeRequest;
+                   iid = mr.iid;
+                 });
       actor = mr.author;
       title = mr.title;
       body;
@@ -292,15 +305,6 @@ let normalize ?pipeline_status:latest_pipeline mr discussions =
     };
     evidence;
   }
-
-let strip_trailing_slashes value =
-  let rec loop value =
-    let length = String.length value in
-    if length > 0 && value.[length - 1] = '/' then
-      loop (String.sub value 0 (length - 1))
-    else value
-  in
-  loop value
 
 let has_header_control value =
   String.exists (function '\r' | '\n' -> true | _ -> false) value
@@ -314,24 +318,24 @@ let config_from_env_with ~getenv ~project_ids () =
       begin match getenv "PHAROS_GITLAB_BASE_URL" |> normalize_optional_text with
       | None -> Error "Missing PHAROS_GITLAB_BASE_URL"
       | Some base_url ->
-          let base_url = strip_trailing_slashes base_url in
-          if not (String.starts_with ~prefix:"https://" base_url
-                  || String.starts_with ~prefix:"http://" base_url) then
-            Error "PHAROS_GITLAB_BASE_URL must use http or https"
-          else
+          begin match Gitlab_identity.instance_of_base_url base_url with
+          | Error error -> Error error
+          | Ok instance ->
             match getenv "PHAROS_GITLAB_TOKEN" |> normalize_optional_text with
             | None -> Error "Missing PHAROS_GITLAB_TOKEN"
             | Some token when has_header_control token ->
                 Error "PHAROS_GITLAB_TOKEN contains invalid control characters"
             | Some token ->
                 Ok {
-                  base_url;
+                  base_url = instance.base_url;
+                  instance_id = instance.id;
                   token;
                   username =
                     getenv "PHAROS_GITLAB_USERNAME"
                     |> normalize_optional_text;
                   project_ids;
                 }
+          end
       end
 
 let config_from_env ~project_ids () =
@@ -516,7 +520,9 @@ let fetch_and_process_merge_request get_json store config listed_mr =
   in
   let* discussions = parse_discussions discussions_json in
   let pipeline_status = fetch_pipeline_status get_json config mr in
-  let normalized = normalize ?pipeline_status mr discussions in
+  let normalized =
+    normalize ~instance_id:config.instance_id ?pipeline_status mr discussions
+  in
   ignore (Runner.ingest_source_signal ~evidence:normalized.evidence
     ~managed_evidence_kinds:[
       "gitlab.mr.metadata";
@@ -614,11 +620,27 @@ let reject_legacy_projects ~getenv store =
       Source_settings.record_sync_error store source_id legacy_projects_error;
       Error legacy_projects_error
 
+let validate_instance_config store config =
+  let result =
+    match Gitlab_identity.instance_of_base_url config.base_url with
+    | Ok instance
+      when instance.base_url = config.base_url
+           && instance.id = config.instance_id ->
+        Ok ()
+    | Ok _ | Error _ -> Error "GitLab config has inconsistent instance identity"
+  in
+  match result with
+  | Ok () -> Ok ()
+  | Error error ->
+      Source_settings.record_sync_error store source_id error;
+      Error error
+
 let sync_once_with ?(getenv=(fun _ -> None)) ~get_json store config =
   match gitlab_read_policy store with
   | Error error -> Error error
   | Ok policy ->
       let* () = reject_legacy_projects ~getenv store in
+      let* () = validate_instance_config store config in
       if policy.project_ids <> config.project_ids then
         let error = "GitLab config does not match persisted source scope" in
         Source_settings.record_sync_error store source_id error;

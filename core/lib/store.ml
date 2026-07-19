@@ -37,27 +37,53 @@ let rec canonical_database_path path =
 let delivery_lock_path db_path =
   canonical_database_path db_path ^ "-delivery.lock"
 
+let reject_hard_linked_database db_path =
+  try
+    let canonical = canonical_database_path db_path in
+    match (Unix.stat canonical).st_nlink with
+    | links when links > 1 ->
+        Error
+          (Printf.sprintf
+             "GitLab delivery refuses database files with multiple hard links: %s"
+             canonical)
+    | _ -> Ok ()
+    | exception Unix.Unix_error (Unix.ENOENT, _, _) -> Ok ()
+  with Unix.Unix_error (error, _, _) ->
+    Error
+      (Printf.sprintf "Unable to inspect GitLab delivery database: %s"
+         (Unix.error_message error))
+
 let acquire_delivery_owner db_path =
   try
     ensure_parent_dir db_path;
-    let lock_path = delivery_lock_path db_path in
-    ensure_parent_dir lock_path;
-    let descriptor =
-      Unix.openfile lock_path [ Unix.O_WRONLY; Unix.O_CREAT ] 0o600
-    in
-    Unix.set_close_on_exec descriptor;
-    match Unix.lockf descriptor Unix.F_TLOCK 0 with
-    | () -> Ok { descriptor }
-    | exception Unix.Unix_error ((Unix.EACCES | Unix.EAGAIN), _, _) ->
-        Unix.close descriptor;
-        Error
-          (Printf.sprintf
-             "GitLab delivery owner is already active for database %s" db_path)
-    | exception Unix.Unix_error (error, _, _) ->
-        Unix.close descriptor;
-        Error
-          (Printf.sprintf "Unable to acquire GitLab delivery owner: %s"
-             (Unix.error_message error))
+    match reject_hard_linked_database db_path with
+    | Error _ as error -> error
+    | Ok () ->
+      let lock_path = delivery_lock_path db_path in
+      ensure_parent_dir lock_path;
+      let descriptor =
+        Unix.openfile lock_path [ Unix.O_WRONLY; Unix.O_CREAT ] 0o600
+      in
+      Unix.set_close_on_exec descriptor;
+      match Unix.lockf descriptor Unix.F_TLOCK 0 with
+      | () ->
+          begin match reject_hard_linked_database db_path with
+          | Ok () -> Ok { descriptor }
+          | Error _ as error ->
+              Unix.lockf descriptor Unix.F_ULOCK 0;
+              Unix.close descriptor;
+              error
+          end
+      | exception Unix.Unix_error ((Unix.EACCES | Unix.EAGAIN), _, _) ->
+          Unix.close descriptor;
+          Error
+            (Printf.sprintf
+               "GitLab delivery owner is already active for database %s" db_path)
+      | exception Unix.Unix_error (error, _, _) ->
+          Unix.close descriptor;
+          Error
+            (Printf.sprintf "Unable to acquire GitLab delivery owner: %s"
+               (Unix.error_message error))
   with Unix.Unix_error (error, _, _) ->
     Error
       (Printf.sprintf "Unable to open GitLab delivery owner lock: %s"

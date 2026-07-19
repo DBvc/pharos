@@ -16,10 +16,24 @@ let with_store f =
       if Sys.file_exists path then Sys.remove path)
     (fun () -> f store)
 
+let gitlab_instance =
+  Gitlab_identity.instance_of_base_url "https://gitlab.example"
+  |> Result.get_ok
+
+let gitlab_target ?(project_id=123) ?(iid=456)
+    ?(object_kind=Gitlab_identity.MergeRequest) () : Gitlab_write.target =
+  { instance_id = gitlab_instance.id; project_id; object_kind; iid }
+
+let gitlab_external_id () =
+  Gitlab_identity.external_id (gitlab_target ())
+
+let gitlab_target_ref () =
+  Gitlab_identity.target_ref (gitlab_target ())
+
 let gitlab_input () : Runner.source_signal_input =
   {
     kind = GitLab;
-    external_id = Some "gitlab:project/123:mr/456";
+    external_id = Some (gitlab_external_id ());
     actor = "alice";
     title = "Review requested: billing retry logic";
     body = "Alice requested your review. Pipeline is passing.";
@@ -258,19 +272,22 @@ let test_preflight_negatives () =
     | Policy.ActionBodyTooLong _ -> true
     | _ -> false);
   test_target_blocks_before_client ~target_kind:"gitlab.mr.approve"
-    ~target_ref:"project_id=123;mr_iid=456" (function
+    ~target_ref:(gitlab_target_ref ()) (function
     | Policy.ExternalTargetNotAllowed _ -> true
     | _ -> false);
   test_target_blocks_before_client ~target_kind:"gitlab.mr.comment"
-    ~target_ref:"project_id=123" (function
+    ~target_ref:("project_id=123") (function
     | Policy.ExternalTargetInvalid _ -> true
     | _ -> false);
   test_target_blocks_before_client ~target_kind:"gitlab.mr.comment"
-    ~target_ref:"project_id=123;mr_iid=999" (function
+    ~target_ref:
+      (Gitlab_identity.target_ref (gitlab_target ~iid:999 ())) (function
     | Policy.TargetProvenanceMismatch _ -> true
     | _ -> false);
   test_target_blocks_before_client ~target_kind:"gitlab.issue.comment"
-    ~target_ref:"project_id=123;issue_iid=456" (function
+    ~target_ref:
+      (Gitlab_identity.target_ref
+         (gitlab_target ~object_kind:Gitlab_identity.Issue ())) (function
     | Policy.TargetProvenanceMismatch _ -> true
     | _ -> false)
 
@@ -464,6 +481,20 @@ let test_reconciliation_error_remains_unknown () =
     if post_count fake <> 1 then
       failf "reconciliation error issued another POST")
 
+let test_reconciliation_rechecks_source_policy () =
+  with_store (fun store ->
+    let _, _, attempt, fake, client = prepare_unknown store in
+    patch_gitlab_source store ~enabled:false ~write_enabled:true ~scope_json:"{}";
+    Runner.reconcile_writeback ~client store attempt.id
+    |> expect_error "disabled source reconciliation" (function
+         | Policy.SourceWriteDisabled GitLab -> true
+         | _ -> false);
+    if reconciliation_count fake <> 0 then
+      failf "disabled source reached the reconciliation client";
+    let current = Option.get (Store.get_writeback_attempt store attempt.id) in
+    if current.status <> WritebackUnknown then
+      failf "blocked reconciliation changed the durable attempt")
+
 let test_reconciliation_claim_recovery_becomes_unknown () =
   with_store (fun store ->
     let _, _, attempt, _, _ = prepare_unknown store in
@@ -542,9 +573,7 @@ let with_environment name value f =
 let test_real_client_rejects_plain_http_before_send () =
   with_environment "PHAROS_GITLAB_BASE_URL" "http://gitlab.example" (fun () ->
     with_environment "PHAROS_GITLAB_TOKEN" "test-token" (fun () ->
-      let target =
-        Gitlab_write.{ project_id = 123; object_kind = MergeRequest; iid = 456 }
-      in
+      let target = gitlab_target () in
       let marker_value =
         Gitlab_write.marker ~attempt_id:"wb_test"
           ~payload_hash:
@@ -554,7 +583,6 @@ let test_real_client_rejects_plain_http_before_send () =
       let request : Gitlab_write.request =
         {
           target;
-          source_url = None;
           body = "review";
           marker = marker_value;
         }
@@ -564,6 +592,92 @@ let test_real_client_rejects_plain_http_before_send () =
         when String.starts_with ~prefix:"PHAROS_GITLAB_BASE_URL" error -> ()
       | Failed_before_send error -> failf "unexpected config error: %s" error
       | Confirmed _ | Unknown _ -> failf "plain HTTP reached a send outcome"))
+
+let test_real_client_rejects_encoded_host_control_before_send () =
+  with_environment "PHAROS_GITLAB_BASE_URL" "https://%00gitlab.example" (fun () ->
+    with_environment "PHAROS_GITLAB_TOKEN" "test-token" (fun () ->
+      let request : Gitlab_write.request =
+        {
+          target = gitlab_target ();
+          body = "review";
+          marker =
+            Gitlab_write.marker ~attempt_id:"wb_test"
+              ~payload_hash:
+                "sha256:6f61c67b639f2adab56d4cec560d4a18fbf805531cebdc6fd8f74d0cce6e46f4"
+            |> Result.get_ok;
+        }
+      in
+      match Gitlab_write.real_client.post request with
+      | Failed_before_send error
+        when String.starts_with ~prefix:"PHAROS_GITLAB_BASE_URL" error -> ()
+      | Failed_before_send error -> failf "unexpected host error: %s" error
+      | Confirmed _ | Unknown _ ->
+          failf "encoded host control reached a send outcome"))
+
+let test_real_client_rejects_instance_switch_before_send () =
+  with_environment "PHAROS_GITLAB_BASE_URL" "https://other.example" (fun () ->
+    with_environment "PHAROS_GITLAB_TOKEN" "test-token" (fun () ->
+      let request : Gitlab_write.request =
+        {
+          target = gitlab_target ();
+          body = "review";
+          marker =
+            Gitlab_write.marker ~attempt_id:"wb_test"
+              ~payload_hash:
+                "sha256:6f61c67b639f2adab56d4cec560d4a18fbf805531cebdc6fd8f74d0cce6e46f4"
+            |> Result.get_ok;
+        }
+      in
+      match Gitlab_write.real_client.post request with
+      | Failed_before_send error
+        when String.ends_with ~suffix:"approved GitLab instance" error -> ()
+      | Failed_before_send error -> failf "unexpected instance error: %s" error
+      | Confirmed _ | Unknown _ -> failf "instance switch reached a send outcome"))
+
+let test_note_response_is_target_bound () =
+  let target = gitlab_target () in
+  let note ?(id=`Int 123) ?(project_id=`Int 123)
+      ?(noteable_type=`String "MergeRequest") ?(noteable_iid=`Int 456) () =
+    `Assoc
+      [
+        ("id", id);
+        ("project_id", project_id);
+        ("noteable_type", noteable_type);
+        ("noteable_iid", noteable_iid);
+      ]
+  in
+  let result =
+    Gitlab_write.post_result_of_note ~base_url:gitlab_instance.base_url ~target
+      (note ())
+    |> Result.get_ok
+  in
+  if
+    result.external_url
+    <> "https://gitlab.example/api/v4/projects/123/merge_requests/456/notes/123"
+  then failf "note result URL was not API target-bound: %s" result.external_url;
+  List.iter
+    (fun (label, response) ->
+      match
+        Gitlab_write.post_result_of_note ~base_url:gitlab_instance.base_url
+          ~target response
+      with
+      | Error _ -> ()
+      | Ok _ -> failf "%s note response was accepted" label)
+    [
+      ("nonpositive id", note ~id:(`String "0") ());
+      ("wrong project", note ~project_id:(`Int 999) ());
+      ("wrong type", note ~noteable_type:(`String "Issue") ());
+      ("wrong iid", note ~noteable_iid:(`Int 999) ());
+    ];
+  begin
+    match
+      Gitlab_write.post_result_of_note
+        ~base_url:"https://user:secret@gitlab.example" ~target (note ())
+    with
+    | Error error when not (String.contains error '@') -> ()
+    | Error error -> failf "credential URL leaked in error: %s" error
+    | Ok _ -> failf "credential-bearing base URL was accepted"
+  end
 
 let test_marker_matching_requires_an_exact_line () =
   let marker =
@@ -581,40 +695,6 @@ let test_marker_matching_requires_an_exact_line () =
         failf "partial marker matched: %s" candidate)
     [ "prefix " ^ marker; marker ^ " suffix"; "`" ^ marker ^ "`" ]
 
-let test_fallback_external_url_is_target_bound () =
-  let target =
-    Gitlab_write.{ project_id = 123; object_kind = MergeRequest; iid = 456 }
-  in
-  let fallback source_url =
-    Gitlab_write.fallback_external_url
-      ~base_url:"https://gitlab.example" ~target ~source_url ~note_id:"123"
-  in
-  let source =
-    "https://gitlab.example/group/project/-/merge_requests/456?view=diffs#old"
-  in
-  let expected_source =
-    "https://gitlab.example/group/project/-/merge_requests/456#note_123"
-  in
-  if fallback (Some source) <> expected_source then
-    failf "matching source URL was not used for note fallback";
-  let expected_api =
-    "https://gitlab.example/api/v4/projects/123/merge_requests/456/notes/123"
-  in
-  List.iter
-    (fun untrusted ->
-      let actual = fallback (Some untrusted) in
-      if actual <> expected_api then
-        failf "untrusted source URL produced %s" actual)
-    [
-      "https://gitlab.example.evil/group/project/-/merge_requests/456";
-      "https://other.example/group/project/-/merge_requests/456";
-      "https://gitlab.example/group/project/-/merge_requests/999";
-      "https://gitlab.example/group/project/-/issues/456";
-      "https://gitlab.example/group/project/-/merge_requests/456/notes";
-    ];
-  if fallback None <> expected_api then
-    failf "missing source URL did not produce exact note API resource"
-
 let () =
   Random.self_init ();
   test_preflight_negatives ();
@@ -625,10 +705,13 @@ let () =
   test_reconciliation_claim_blocks_competitors_and_can_confirm ();
   test_marker_not_found_remains_unknown ();
   test_reconciliation_error_remains_unknown ();
+  test_reconciliation_rechecks_source_policy ();
   test_reconciliation_claim_recovery_becomes_unknown ();
   test_in_flight_recovery_becomes_unknown ();
   test_prepared_recovery_is_retryable ();
   test_abandon_requires_fresh_approval ();
   test_real_client_rejects_plain_http_before_send ();
-  test_marker_matching_requires_an_exact_line ();
-  test_fallback_external_url_is_target_bound ()
+  test_real_client_rejects_encoded_host_control_before_send ();
+  test_real_client_rejects_instance_switch_before_send ();
+  test_note_response_is_target_bound ();
+  test_marker_matching_requires_an_exact_line ()

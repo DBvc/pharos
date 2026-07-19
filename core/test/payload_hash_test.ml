@@ -10,13 +10,15 @@ let expect_not_equal label left right =
   if left = right then failf "%s: hashes unexpectedly matched at %s" label left
 
 let hash ?(target_kind = "gitlab.mr.comment")
-    ?(target_ref = "project_id=42;mr_iid=7") ?(risk = L3)
+    ?(target_ref =
+      "instance=e3faea18935d7af1aff3f5d92e5546931721e04a207eff114fe3e9b621956d58;project_id=42;mr_iid=7")
+    ?(risk = L3)
     ?(body = "Ship it.\né") () =
   payload_hash ~target_kind ~target_ref ~risk ~body
 
 let test_golden_vector () =
   expect_equal "v2 golden vector"
-    "sha256:6f61c67b639f2adab56d4cec560d4a18fbf805531cebdc6fd8f74d0cce6e46f4"
+    "sha256:5a55f415b6f3bd3590a3c47e69e6e025b7a5bb12224e80256a73b6ac49c2941b"
     (hash ());
   if not (payload_hash_is_v2 (hash ())) then
     failf "golden vector was not recognized as a v2 payload hash"
@@ -34,7 +36,10 @@ let test_each_field_changes_identity () =
   expect_not_equal "target_kind" baseline
     (hash ~target_kind:"gitlab.issue.comment" ());
   expect_not_equal "target_ref" baseline
-    (hash ~target_ref:"project_id=42;mr_iid=8" ());
+    (hash
+       ~target_ref:
+         "instance=e3faea18935d7af1aff3f5d92e5546931721e04a207eff114fe3e9b621956d58;project_id=42;mr_iid=8"
+       ());
   expect_not_equal "risk" baseline (hash ~risk:L2 ());
   expect_not_equal "body" baseline (hash ~body:"Ship it.\né!" ())
 

@@ -34,7 +34,7 @@ Request body:
 ```json
 {
   "kind": "gitlab",
-  "external_id": "gitlab:project/42:mr/123",
+  "external_id": "gitlab:instance/839098c2ddad1e0534ea90cda97af9a522cf080e83d9579eb0125b395baa06fe:project/42:mr/123",
   "actor": "alice",
   "title": "Review retry logic",
   "body": "MR !123 requested your review.",
@@ -129,7 +129,7 @@ Known adapters should prefer canonical `external_id` values over URL fallback.
 For GitLab MR fixtures, use:
 
 ```text
-gitlab:project/<project_id>:mr/<iid>
+gitlab:instance/<instance_sha256>:project/<project_id>:mr/<iid>
 ```
 
 ## Active request rule

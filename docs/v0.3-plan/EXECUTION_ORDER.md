@@ -36,7 +36,7 @@ Run these tasks in order. Each task is a vertical slice and must leave the repos
   versioned `sha256:` payload identity for proposal freshness, review CAS,
   approval verification, durable attempts, and writeback markers. Pre-v2
   disposable development databases are rebuilt rather than silently migrated.
-- Task 10b is the first task allowed to add a real external write route. It must verify target provenance, persist a durable attempt before the client call, and keep ambiguous outcomes `unknown` until reconciliation or explicit abandon.
+- Task 10b is the first task allowed to add a real external write route. It must bind source/action/attempt/runtime config to one canonical GitLab instance fingerprint, verify exact object provenance, persist a durable attempt before the client call, and keep ambiguous outcomes `unknown` until reconciliation or explicit abandon. Legacy unbound GitLab dev data is rebuilt, not migrated.
 - Task 11 metrics Today group counts are daily snapshot/gauge values, not refresh counters.
 
 ## Build and test commands every task should run when relevant

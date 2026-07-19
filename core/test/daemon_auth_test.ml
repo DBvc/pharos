@@ -22,6 +22,19 @@ let with_store f =
       if Sys.file_exists path then Sys.remove path)
     (fun () -> f store)
 
+let gitlab_instance =
+  Gitlab_identity.instance_of_base_url "https://gitlab.example"
+  |> Result.get_ok
+
+let gitlab_external_id =
+  Gitlab_identity.external_id
+    {
+      instance_id = gitlab_instance.id;
+      project_id = 123;
+      object_kind = MergeRequest;
+      iid = 456;
+    }
+
 let capture store title =
   Runner.capture_manual store
     { Runner.title = Some title; body = title; url = None; actor = Some "test" }
@@ -34,7 +47,7 @@ let first_action store request_id =
 let gitlab_input () : Runner.source_signal_input =
   {
     kind = GitLab;
-    external_id = Some "gitlab:project/123:mr/456";
+    external_id = Some gitlab_external_id;
     actor = "alice";
     title = "Review requested";
     body = "Alice requested review.";
@@ -577,11 +590,55 @@ let test_capability_primitives () =
       Some ("Bearer " ^ capability_token ^ " ");
     ]
 
+let test_delivery_owner_rejects_hard_linked_database () =
+  let db_path = temp_db () in
+  let alias_path = db_path ^ ".hardlink" in
+  let cleanup () =
+    List.iter
+      (fun path -> if Sys.file_exists path then Sys.remove path)
+      [ alias_path; db_path; Store.delivery_lock_path db_path ]
+  in
+  Fun.protect ~finally:cleanup (fun () ->
+    let store = Store.connect db_path in
+    Store.close store;
+    Unix.link db_path alias_path;
+    List.iter
+      (fun path ->
+        match Store.acquire_delivery_owner path with
+        | Error error
+          when String.starts_with
+                 ~prefix:"GitLab delivery refuses database files with multiple hard links"
+                 error ->
+            ()
+        | Error error -> failf "unexpected hard-link rejection: %s" error
+        | Ok owner ->
+            Store.release_delivery_owner owner;
+            failf "hard-linked database acquired delivery ownership")
+      [ db_path; alias_path ])
+
+let test_delivery_owner_creates_missing_parent () =
+  let parent = temp_db () ^ ".dir" in
+  let db_path = Filename.concat parent "pharos.sqlite" in
+  let lock_path = db_path ^ "-delivery.lock" in
+  let cleanup () =
+    List.iter
+      (fun path -> if Sys.file_exists path then Sys.remove path)
+      [ db_path; lock_path ];
+    if Sys.file_exists parent then Unix.rmdir parent
+  in
+  Fun.protect ~finally:cleanup (fun () ->
+    let owner = Store.acquire_delivery_owner db_path |> Result.get_ok in
+    Store.release_delivery_owner owner;
+    if not (Sys.file_exists parent) then
+      failf "delivery ownership did not create the database parent directory")
+
 let () =
   Random.self_init ();
   test_capability_primitives ();
   test_daemon_rejects_config_before_sqlite ();
   test_delivery_owner_blocks_recovery_until_lock_acquired ();
+  test_delivery_owner_creates_missing_parent ();
+  test_delivery_owner_rejects_hard_linked_database ();
   test_all_v0_routes_require_capability ();
   test_health_is_public ();
   test_slow_writeback_does_not_block_health ();

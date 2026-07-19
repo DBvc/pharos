@@ -30,6 +30,21 @@ let with_store f =
       if Sys.file_exists path then Sys.remove path)
     (fun () -> f store)
 
+let gitlab_instance =
+  Gitlab_identity.instance_of_base_url "https://gitlab.example"
+  |> Result.get_ok
+
+let gitlab_target : Gitlab_identity.target =
+  {
+    instance_id = gitlab_instance.id;
+    project_id = 123;
+    object_kind = MergeRequest;
+    iid = 456;
+  }
+
+let gitlab_external_id = Gitlab_identity.external_id gitlab_target
+let gitlab_target_ref = Gitlab_identity.target_ref gitlab_target
+
 let valid_triage_json ?(priority = "normal") ?(risk = "l1") () =
   `Assoc [
     ("should_create_request", `Bool true);
@@ -55,7 +70,7 @@ let test_triage_parser () =
 let gitlab_input () : Runner.source_signal_input =
   {
     kind = GitLab;
-    external_id = Some "gitlab:project/123:mr/456";
+    external_id = Some gitlab_external_id;
     actor = "alice";
     title = "Review requested: billing retry logic";
     body = "Alice requested your review. Pipeline is failing in retry policy tests.";
@@ -79,7 +94,7 @@ let test_gitlab_skill_prepares_but_cannot_execute () =
     let action = only_action store response.request.id in
     if action.target_kind <> "gitlab.mr.comment" then
       failf "unexpected GitLab target kind: %s" action.target_kind;
-    if action.target_ref <> "project_id=123;mr_iid=456" then
+    if action.target_ref <> gitlab_target_ref then
       failf "unexpected GitLab target ref: %s" action.target_ref;
     if not action.requires_approval then
       failf "GitLab comment draft must require approval";
@@ -157,7 +172,7 @@ let invalid_gitlab_output =
     ("test_gaps", `List []);
     ("draft_comment", `String "draft");
     ("target_kind", `String "gitlab.mr.comment");
-    ("target_ref", `String "project_id=123;mr_iid=456");
+    ("target_ref", `String gitlab_target_ref);
     ("risk", `String "l9");
     ("requires_approval", `Bool true);
     ("evidence_refs", `List [ `String "ev_invalid_skill" ]);
@@ -226,7 +241,7 @@ let test_source_bundle_rolls_back_on_action_failure () =
       failf "failed source bundle left a work request";
     if Option.is_some
         (Store.get_work_request_identity store
-          "gitlab:gitlab:project/123:mr/456") then
+          ("gitlab:" ^ gitlab_external_id)) then
       failf "failed source bundle left an identity binding";
     if Option.is_some (Store.get_metric_for_day store (Time.today_utc ())) then
       failf "failed source bundle left metric writes";

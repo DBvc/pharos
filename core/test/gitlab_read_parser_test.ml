@@ -64,8 +64,21 @@ let remove_member name = function
   | `Assoc fields -> `Assoc (List.remove_assoc name fields)
   | json -> json
 
+let fixture_instance =
+  Gitlab_identity.instance_of_base_url "https://gitlab.example.com"
+  |> Result.get_ok
+
+let fixture_target : Gitlab_identity.target =
+  {
+    instance_id = fixture_instance.id;
+    project_id = 42;
+    object_kind = MergeRequest;
+    iid = 7;
+  }
+
 let fixture_config : Gitlab_read.config = {
-  base_url = "https://gitlab.example.com";
+  base_url = fixture_instance.base_url;
+  instance_id = fixture_instance.id;
   token = "fixture-token";
   username = Some "dbvc";
   project_ids = [];
@@ -107,9 +120,12 @@ let test_parser mr_json discussions_json =
   in
   expect_int "discussion count" 2 discussions.count;
   expect_int "unresolved discussion count" 1 discussions.unresolved_count;
-  let normalized = Gitlab_read.normalize mr discussions in
+  let normalized =
+    Gitlab_read.normalize ~instance_id:fixture_instance.id mr discussions
+  in
   expect_option_string "stable external id"
-    (Some "gitlab:project/42:mr/7") normalized.signal.external_id;
+    (Some (Gitlab_identity.external_id fixture_target))
+    normalized.signal.external_id;
   expect_option_string "MR URL"
     (Some "https://gitlab.example.com/acme/payments/-/merge_requests/7")
     normalized.signal.url;
@@ -121,7 +137,9 @@ let test_parser mr_json discussions_json =
   ignore (find_evidence "gitlab.mr.pipeline" normalized.evidence);
   ignore (find_evidence "gitlab.mr.discussions" normalized.evidence);
   let minimal = List.nth merge_requests 1 in
-  let minimal_normalized = Gitlab_read.normalize minimal discussions in
+  let minimal_normalized =
+    Gitlab_read.normalize ~instance_id:fixture_instance.id minimal discussions
+  in
   expect_string "missing author falls back" "gitlab" minimal_normalized.signal.actor;
   expect_option_string "missing URL stays absent" None minimal_normalized.signal.url;
   let bounded = Gitlab_read.bounded_text (String.make 5000 'x') in
@@ -182,7 +200,8 @@ let test_sync_reuses_merge_identity mr_json discussions_json =
       | [ value ] -> value
       | actions -> failf "expected one GitLab action, got %d" (List.length actions)
     in
-    expect_string "canonical GitLab target ref" "project_id=42;mr_iid=7"
+    expect_string "canonical GitLab target ref"
+      (Gitlab_identity.target_ref fixture_target)
       action.target_ref;
     detail.evidence
     |> List.filter (fun (item : evidence_item) ->
@@ -353,6 +372,12 @@ let test_source_policy_gates_network () =
       (Source_settings.patch_source store Gitlab_read.source_id
          (source_patch ~scope_json:"{}" ())
        |> source_result_or_fail "repair GitLab scope");
+    let mismatched_instance =
+      { fixture_config with instance_id = String.make 64 '0' }
+    in
+    expect_error "adapter instance mismatch"
+      (Gitlab_read.sync_once_with ~get_json store mismatched_instance);
+    expect_int "mismatched instance network calls" 0 !calls;
     let mismatched_config =
       { fixture_config with project_ids = [ "42" ] }
     in

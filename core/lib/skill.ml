@@ -183,41 +183,15 @@ let external_target_ref (signal : source_signal) =
   | Some value when String.trim value <> "" -> Some (String.trim value)
   | _ -> None
 
-let find_substring value needle =
-  let value_len = String.length value in
-  let needle_len = String.length needle in
-  let rec loop index =
-    if index + needle_len > value_len then None
-    else if String.sub value index needle_len = needle then Some index
-    else loop (index + 1)
-  in
-  if needle_len = 0 then Some 0 else loop 0
-
 let gitlab_mr_target_ref_of_external_id external_id =
-  let prefix = "gitlab:project/" in
-  let marker = ":mr/" in
   match external_id with
   | None -> Error "GitLab MR source is missing a stable external_id"
-  | Some value when not (String.starts_with ~prefix value) ->
-      Error "GitLab MR external_id must start with gitlab:project/"
   | Some value ->
-      let rest = String.sub value (String.length prefix)
-        (String.length value - String.length prefix) in
-      begin match find_substring rest marker with
-      | None -> Error "GitLab MR external_id is missing :mr/<iid>"
-      | Some marker_index ->
-          let project_id = String.sub rest 0 marker_index in
-          let iid_start = marker_index + String.length marker in
-          let iid = String.sub rest iid_start (String.length rest - iid_start) in
-          if project_id = "" || String.contains project_id ';'
-              || String.contains project_id '=' then
-            Error "GitLab MR external_id has an invalid project id"
-          else
-            begin match int_of_string_opt iid with
-            | Some value when value > 0 ->
-                Ok (Printf.sprintf "project_id=%s;mr_iid=%d" project_id value)
-            | _ -> Error "GitLab MR external_id has an invalid iid"
-            end
+      begin match Gitlab_identity.parse_external_id value with
+      | Ok ({ object_kind = MergeRequest; _ } as target) ->
+          Ok (Gitlab_identity.target_ref target)
+      | Ok _ -> Error "GitLab MR external_id identifies an issue"
+      | Error error -> Error error
       end
 
 let triage_skill (input : input) =

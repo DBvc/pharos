@@ -60,41 +60,59 @@ final class AppState: ObservableObject {
     }
 
     func approve(_ action: ProposedAction, executeAfterApproval: Bool = true) async {
+        var approvalCompleted = false
         do {
             _ = try await api.approve(
                 actionId: action.id,
                 expectedPayloadHash: action.payloadHash
             )
+            approvalCompleted = true
             if executeAfterApproval {
-                if action.targetKind.hasPrefix("pharos.") {
+                switch action.executionRoute {
+                case .local:
                     _ = try await api.executeLocal(actionId: action.id)
-                } else {
+                case .gitlabWriteback:
                     _ = try await api.executeApproved(actionId: action.id)
+                case .approvalOnly:
+                    break
                 }
             }
             await refreshCurrent()
         } catch {
-            await handleActionMutationError(error)
+            if approvalCompleted {
+                await handleDurableMutationError(error)
+            } else {
+                await handleActionMutationError(error)
+            }
         }
     }
 
     func editAndApprove(_ action: ProposedAction, body: String, executeAfterApproval: Bool = true) async {
+        var approvalCompleted = false
         do {
             _ = try await api.editAndApprove(
                 actionId: action.id,
                 body: body,
                 expectedPayloadHash: action.payloadHash
             )
+            approvalCompleted = true
             if executeAfterApproval {
-                if action.targetKind.hasPrefix("pharos.") {
+                switch action.executionRoute {
+                case .local:
                     _ = try await api.executeLocal(actionId: action.id)
-                } else {
+                case .gitlabWriteback:
                     _ = try await api.executeApproved(actionId: action.id)
+                case .approvalOnly:
+                    break
                 }
             }
             await refreshCurrent()
         } catch {
-            await handleActionMutationError(error)
+            if approvalCompleted {
+                await handleDurableMutationError(error)
+            } else {
+                await handleActionMutationError(error)
+            }
         }
     }
 
@@ -115,7 +133,7 @@ final class AppState: ObservableObject {
             _ = try await api.executeApproved(actionId: action.id)
             await refreshCurrent()
         } catch {
-            errorMessage = readable(error)
+            await handleDurableMutationError(error)
         }
     }
 
@@ -124,7 +142,7 @@ final class AppState: ObservableObject {
             _ = try await api.reconcileWriteback(attemptId: attempt.id)
             await refreshCurrent()
         } catch {
-            errorMessage = readable(error)
+            await handleDurableMutationError(error)
         }
     }
 
@@ -133,7 +151,7 @@ final class AppState: ObservableObject {
             _ = try await api.abandonWriteback(attemptId: attempt.id)
             await refreshCurrent()
         } catch {
-            errorMessage = readable(error)
+            await handleDurableMutationError(error)
         }
     }
 
@@ -156,6 +174,15 @@ final class AppState: ObservableObject {
         }
         if await refreshCurrent() {
             errorMessage = "This draft changed. Review the refreshed action before deciding."
+        } else {
+            selectedDetail = nil
+        }
+    }
+
+    private func handleDurableMutationError(_ error: Error) async {
+        let originalMessage = readable(error)
+        if await refreshCurrent() {
+            errorMessage = originalMessage
         } else {
             selectedDetail = nil
         }

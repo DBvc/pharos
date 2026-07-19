@@ -110,12 +110,16 @@ GET /api/v4/projects/:id/merge_requests/:iid/pipelines
 ```
 
 Each MR becomes a GitLab `SourceSignal` with stable identity
-`gitlab:project/<project_id>:mr/<iid>`, then enters the same Runner path as fake
+`gitlab:instance/<instance_sha256>:project/<project_id>:mr/<iid>`, then enters
+the same Runner path as fake
 replay. The adapter attaches bounded `gitlab.mr.metadata`,
 `gitlab.mr.pipeline` when known, and `gitlab.mr.discussions` evidence. Every
 evidence body is limited to 4000 bytes.
 
-Base URL, credentials, and username come from environment; watched project IDs
+The base URL is a canonical HTTPS origin plus optional relative root. Its
+domain-separated SHA-256 fingerprint is part of every GitLab object identity;
+userinfo, query, fragment, controls, and plain HTTP are rejected. Credentials
+and username come from environment; watched project IDs
 come only from the persisted, validated `src_gitlab.scope_json`. `{}` keeps the
 global `reviews_for_me` query, and configured projects only add scans. They are
 not a write allowlist. `PHAROS_GITLAB_PROJECTS` is rejected when present. The

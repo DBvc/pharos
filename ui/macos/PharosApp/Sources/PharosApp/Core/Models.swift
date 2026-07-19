@@ -109,6 +109,20 @@ struct ProposedAction: Identifiable, Codable, Hashable {
     let payloadHash: String
     let createdAt: String
     let updatedAt: String
+
+    var executionRoute: ActionExecutionRoute {
+        if targetKind.hasPrefix("pharos.") { return .local }
+        if targetKind == "gitlab.mr.comment" || targetKind == "gitlab.issue.comment" {
+            return .gitlabWriteback
+        }
+        return .approvalOnly
+    }
+}
+
+enum ActionExecutionRoute: Equatable {
+    case local
+    case gitlabWriteback
+    case approvalOnly
 }
 
 struct WritebackAttempt: Identifiable, Codable, Hashable {

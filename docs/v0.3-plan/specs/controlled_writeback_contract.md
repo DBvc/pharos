@@ -117,11 +117,19 @@ Before any client call, core re-reads and verifies:
 6. GitLab source policy is valid and
    `effective_write = enabled && write_enabled` is true.
 7. Body is nonblank and at most 8000 characters.
-8. Target provenance matches the request's stable GitLab source object.
+8. Target provenance matches the request's stable GitLab instance and source
+   object.
 
-MR targets use `project_id=<id>;mr_iid=<iid>` and issue targets use
-`project_id=<id>;issue_iid=<iid>`. Missing, malformed, or mismatched provenance
-must fail before the fake or real client is called.
+The GitLab base URL is canonicalized as an HTTPS origin plus optional relative
+root and may not contain userinfo, query, fragment, controls, dot segments, or
+encoded slashes. Its instance id is the lowercase SHA-256 digest of
+`pharos.gitlab-instance.v1\0 || canonical_base_url`. Source ids use
+`gitlab:instance/<instance_sha256>:project/<id>:mr/<iid>` (or `issue`), MR
+targets use `instance=<instance_sha256>;project_id=<id>;mr_iid=<iid>`, and issue
+targets use `instance=<instance_sha256>;project_id=<id>;issue_iid=<iid>`.
+Missing, legacy, malformed, or mismatched provenance must fail before the fake
+or real client is called. Runtime config must produce the same instance id as
+the approved target before curl starts.
 
 `scope_json.projects` is an additional read-time watched-project set, not write
 authorization. Preflight must not use project membership as a target gate; it
@@ -139,17 +147,31 @@ The real client accepts HTTPS only, places curl `--disable` first, and restricts
 protocols. Token and body must not appear in argv, child environment, logs,
 timeline, or evidence.
 
+A successful note response must contain a positive integer id and target-bound
+`project_id`, `noteable_type`, and `noteable_iid`. Persisted external URLs use
+the exact API note resource built from the canonical base and numeric target;
+untrusted source URLs are not used to construct delivery results. Credential-
+bearing base URLs fail before transport and are never persisted.
+
 ### Marker reconciliation and abandon
 
 The stable marker binds attempt id and the complete v2 payload hash.
 Reconciliation uses the official GitLab MR/Issue Notes list or retrieve API
 with bounded pagination and exact marker matching. A match confirms the
 attempt; no match leaves it `unknown` and never proves non-delivery.
+Before every reconciliation client call, core re-reads source settings and
+requires valid scope plus current `effective_write`.
 
 Only an explicit capability-authenticated abandon of an `unknown` attempt may
 set it to `abandoned`, write an audit timeline event, return the action to
 `ActionProposed`, return the request to `ReadyForReview`, and require fresh
 approval. There is no automatic retry.
+
+Delivery ownership rejects an existing SQLite database with more than one hard
+link. Swift auto-executes only local Pharos actions and the explicit GitLab
+comment allowlist; unsupported external kinds remain approved-only. Swift
+refreshes Today and selected request detail after writeback transport errors or
+conflicts before presenting the error.
 
 ## Required tests
 
@@ -167,7 +189,12 @@ Task 10b uses a fake GitLab client. All policy negatives keep client call count
 at zero. It also covers edited content, confirmed writeback evidence/timeline,
 remote-created-but-response-lost, crash recovery from `in_flight`, marker
 reconciliation, unknown with no second POST, explicit abandon plus fresh
-approval, and `/health` responsiveness while the client is slow.
+approval, instance drift, response target mismatch, hard-link rejection,
+reconciliation policy re-check, Swift routing/state refresh, and `/health`
+responsiveness while the client is slow.
+
+Legacy GitLab identities without an instance id are not migrated or silently
+rewritten. Rebuild the disposable unreleased v0.3 development database.
 
 ## Non-goals
 

@@ -38,13 +38,26 @@ let with_store f =
       if Sys.file_exists path then Sys.remove path)
     (fun () -> f store)
 
+let gitlab_instance =
+  Gitlab_identity.instance_of_base_url "https://gitlab.example"
+  |> Result.get_ok
+
+let gitlab_external_id =
+  Gitlab_identity.external_id
+    {
+      instance_id = gitlab_instance.id;
+      project_id = 123;
+      object_kind = MergeRequest;
+      iid = 456;
+    }
+
 let gitlab_input ?(title = "Review requested: billing retry logic")
     ?(body = "Alice requested your review on MR !456.")
     ?(raw_json = {|{"project_id":123,"iid":456}|}) () :
     Runner.source_signal_input =
   {
     kind = GitLab;
-    external_id = Some "gitlab:project/123:mr/456";
+    external_id = Some gitlab_external_id;
     actor = "alice";
     title;
     body;

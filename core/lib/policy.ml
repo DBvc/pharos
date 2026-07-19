@@ -340,7 +340,6 @@ let validate_writeback_body (action : proposed_action) =
 let writeback_request (operation : writeback_operation) : Gitlab_write.request =
   {
     target = operation.target;
-    source_url = operation.source_signal.url;
     body = operation.action.body;
     marker = operation.attempt.marker;
   }
@@ -795,9 +794,15 @@ let prepare_reconciliation store attempt_id =
                           Error (SourceSignalNotFound request.source_signal_id)
                       | Some signal ->
                           begin
-                            match validate_source_provenance action signal target with
-                            | Error _ as error -> error
-                            | Ok () ->
+                            match Source_settings.gitlab_policy store with
+                            | Error error -> Error (source_policy_error error)
+                            | Ok policy when not policy.effective_write ->
+                                Error (SourceWriteDisabled GitLab)
+                            | Ok _ ->
+                              begin
+                                match validate_source_provenance action signal target with
+                                | Error _ as error -> error
+                                | Ok () ->
                                 if
                                   Store.claim_writeback_reconciliation store
                                     attempt.id
@@ -825,6 +830,7 @@ let prepare_reconciliation store attempt_id =
                                   Error
                                     (WritebackAttemptStateMismatch
                                        { attempt_id; status })
+                              end
                           end
                     end
               end

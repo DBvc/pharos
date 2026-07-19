@@ -89,7 +89,7 @@ Output:
   "test_gaps": [],
   "draft_comment": "...",
   "target_kind": "gitlab.mr.comment",
-  "target_ref": "project_id=123;mr_iid=456",
+  "target_ref": "instance=<instance_sha256>;project_id=123;mr_iid=456",
   "risk": "l3",
   "requires_approval": true,
   "evidence_refs": []
@@ -176,10 +176,11 @@ The material context fingerprint remains a separate identity namespace with
 its own `pharos.skill-context.v1\0` version tag.
 
 For GitLab MR comments, parse a stable source id equivalent to
-`gitlab:project/<project_id>:mr/<iid>` and generate exactly:
+`gitlab:instance/<instance_sha256>:project/<project_id>:mr/<iid>` and generate
+exactly:
 
 ```text
-project_id=<project_id>;mr_iid=<iid>
+instance=<instance_sha256>;project_id=<project_id>;mr_iid=<iid>
 ```
 
 Missing or malformed provenance must fail closed to `NeedsContext`; an internal request or

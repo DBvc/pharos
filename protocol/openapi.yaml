@@ -366,6 +366,8 @@ components:
           type: string
         target_ref:
           type: string
+          description: GitLab comments bind instance SHA-256, project id, and MR or issue IID in canonical semicolon-separated form.
+          example: instance=e3faea18935d7af1aff3f5d92e5546931721e04a207eff114fe3e9b621956d58;project_id=123;mr_iid=456
         risk:
           type: string
           enum: [l0, l1, l2, l3, l4, l5]
@@ -402,6 +404,8 @@ components:
           enum: [gitlab.mr.comment, gitlab.issue.comment]
         target_ref:
           type: string
+          description: Immutable approved GitLab instance and object provenance copied from the action.
+          example: instance=e3faea18935d7af1aff3f5d92e5546931721e04a207eff114fe3e9b621956d58;project_id=123;mr_iid=456
         marker:
           type: string
         status:
@@ -410,6 +414,7 @@ components:
           type: [string, 'null']
         external_url:
           type: [string, 'null']
+          description: Exact canonical GitLab API note resource for a confirmed target-bound response.
         error:
           type: [string, 'null']
         created_at:
@@ -486,6 +491,8 @@ components:
           type:
             - string
             - 'null'
+          description: Stable adapter identity. GitLab objects include the canonical instance SHA-256 before project and IID provenance.
+          example: gitlab:instance/e3faea18935d7af1aff3f5d92e5546931721e04a207eff114fe3e9b621956d58:project/123:mr/456
         actor:
           type: string
         title:

@@ -52,6 +52,7 @@ Suggested module API:
 ```ocaml
 type config = {
   base_url : string;
+  instance_id : string;
   token : string;
   username : string option;
   project_ids : string list;
@@ -74,7 +75,7 @@ For each MR:
 
 ```text
 kind = GitLab
-external_id = gitlab:project/<project_id>:mr/<iid>
+external_id = gitlab:instance/<instance_sha256>:project/<project_id>:mr/<iid>
 actor = MR author username or "gitlab"
 title = MR title
 body = bounded summary string with MR state, author, reviewers, pipeline, discussion count
@@ -84,6 +85,10 @@ raw_json = redacted MR JSON subset, not full token-bearing payload
 ```
 
 Then call the same Runner path used by fake replay so merge identity applies.
+`instance_sha256` is SHA-256 over
+`pharos.gitlab-instance.v1\0 || canonical_base_url`, where the canonical base
+URL is an HTTPS origin plus optional relative root. Userinfo, query, fragment,
+control characters, dot segments, encoded slashes, and plain HTTP fail closed.
 
 ## Evidence requirements
 

@@ -25,7 +25,7 @@
   },
   {
     "iid": "9",
-    "project_id": "acme/minimal",
+    "project_id": 43,
     "title": "Minimal optional fields",
     "state": "opened",
     "updated_at": "2026-07-09T10:00:00Z"
