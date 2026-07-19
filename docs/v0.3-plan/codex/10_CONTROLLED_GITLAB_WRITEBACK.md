@@ -60,7 +60,9 @@ unknown-result safety, marker reconciliation, and explicit abandon.
 
 1. Add typed/persisted `writeback_attempts` states from the contract.
 2. Add policy preflight that re-reads action, latest approval, request, source
-   identity, and source settings and validates hash/risk/allowlist/body/target.
+   identity, and source settings and validates hash/risk/allowlist/body/target,
+   valid source policy, and `enabled && write_enabled` through Task 10a2's
+   `Source_settings` owner.
 3. Atomically create one active prepared attempt before network work.
 4. Run the GitLab client outside SQLite transactions and Dream's event loop.
 5. Classify only pre-spawn certainty as `failed_before_send`; all ambiguous
@@ -85,6 +87,9 @@ Fake tests must prove every policy negative calls the client zero times,
 confirmed delivery, response-loss unknown, crash recovery, reconciliation,
 unknown no-second-POST, abandon plus fresh approval, and health responsiveness
 during a slow client.
+
+Disabled source, write-disabled source, and invalid persisted scope are policy
+negatives. `scope_json.projects` is not a write target membership allowlist.
 
 ### Non-goals
 

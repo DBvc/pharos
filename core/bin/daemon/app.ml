@@ -57,21 +57,6 @@ let optional_string name json =
   | `String value -> Ok (Some value)
   | _ -> Error ("Expected string field: " ^ name)
 
-let contains_substring value needle =
-  let value = String.lowercase_ascii value in
-  let needle = String.lowercase_ascii needle in
-  let value_len = String.length value in
-  let needle_len = String.length needle in
-  let rec loop index =
-    index + needle_len <= value_len
-    && (String.sub value index needle_len = needle || loop (index + 1))
-  in
-  needle_len = 0 || loop 0
-
-let scope_contains_credential value =
-  List.exists (contains_substring value)
-    [ "token"; "secret"; "password"; "authorization"; "bearer" ]
-
 let source_patch_of_json json =
   match optional_bool "enabled" json with
   | Error e -> Error e
@@ -84,8 +69,6 @@ let source_patch_of_json json =
           | Ok write_enabled ->
               begin match optional_string "scope_json" json with
               | Error e -> Error e
-              | Ok (Some value) when scope_contains_credential value ->
-                  Error "scope_json must not contain credential-like keys"
               | Ok scope_json ->
                   Ok Domain.{ enabled; read_enabled; write_enabled; scope_json }
               end
@@ -93,7 +76,7 @@ let source_patch_of_json json =
       end
 
 let list_sources store _req =
-  json (Domain.sources_response_to_yojson (Store.list_sources store))
+  json (Domain.sources_response_to_yojson (Source_settings.list_sources store))
 
 let patch_source store req =
   let id = Dream.param req "id" in
@@ -104,9 +87,12 @@ let patch_source store req =
       begin match source_patch_of_json payload with
       | Error e -> error_response e
       | Ok patch ->
-          begin match Store.patch_source store id patch with
-          | None -> error_response ~status:`Not_Found ("Source not found: " ^ id)
-          | Some source -> json (Domain.source_response_to_yojson source)
+          begin match Source_settings.patch_source store id patch with
+          | Error (Source_settings.Source_not_found _) ->
+              error_response ~status:`Not_Found ("Source not found: " ^ id)
+          | Error (Source_settings.Invalid_source_scope _) ->
+              error_response "invalid_source_scope"
+          | Ok source -> json (Domain.source_response_to_yojson source)
           end
       end
 

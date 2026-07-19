@@ -302,40 +302,40 @@ let strip_trailing_slashes value =
   in
   loop value
 
-let split_projects value =
-  value
-  |> String.split_on_char ','
-  |> List.filter_map (fun item -> normalize_optional_text (Some item))
-  |> List.sort_uniq String.compare
-
 let has_header_control value =
   String.exists (function '\r' | '\n' -> true | _ -> false) value
 
-let config_from_env () =
-  match Sys.getenv_opt "PHAROS_GITLAB_BASE_URL" |> normalize_optional_text with
-  | None -> Error "Missing PHAROS_GITLAB_BASE_URL"
-  | Some base_url ->
-      let base_url = strip_trailing_slashes base_url in
-      if not (String.starts_with ~prefix:"https://" base_url
-              || String.starts_with ~prefix:"http://" base_url) then
-        Error "PHAROS_GITLAB_BASE_URL must use http or https"
-      else
-        match Sys.getenv_opt "PHAROS_GITLAB_TOKEN" |> normalize_optional_text with
-        | None -> Error "Missing PHAROS_GITLAB_TOKEN"
-        | Some token when has_header_control token ->
-            Error "PHAROS_GITLAB_TOKEN contains invalid control characters"
-        | Some token ->
-            Ok {
-              base_url;
-              token;
-              username =
-                Sys.getenv_opt "PHAROS_GITLAB_USERNAME"
-                |> normalize_optional_text;
-              project_ids =
-                Sys.getenv_opt "PHAROS_GITLAB_PROJECTS"
-                |> Option.value ~default:""
-                |> split_projects;
-            }
+let config_from_env_with ~getenv ~project_ids () =
+  match getenv "PHAROS_GITLAB_PROJECTS" with
+  | Some _ ->
+      Error
+        "PHAROS_GITLAB_PROJECTS is no longer supported; configure GitLab scope_json"
+  | None ->
+      begin match getenv "PHAROS_GITLAB_BASE_URL" |> normalize_optional_text with
+      | None -> Error "Missing PHAROS_GITLAB_BASE_URL"
+      | Some base_url ->
+          let base_url = strip_trailing_slashes base_url in
+          if not (String.starts_with ~prefix:"https://" base_url
+                  || String.starts_with ~prefix:"http://" base_url) then
+            Error "PHAROS_GITLAB_BASE_URL must use http or https"
+          else
+            match getenv "PHAROS_GITLAB_TOKEN" |> normalize_optional_text with
+            | None -> Error "Missing PHAROS_GITLAB_TOKEN"
+            | Some token when has_header_control token ->
+                Error "PHAROS_GITLAB_TOKEN contains invalid control characters"
+            | Some token ->
+                Ok {
+                  base_url;
+                  token;
+                  username =
+                    getenv "PHAROS_GITLAB_USERNAME"
+                    |> normalize_optional_text;
+                  project_ids;
+                }
+      end
+
+let config_from_env ~project_ids () =
+  config_from_env_with ~getenv:Sys.getenv_opt ~project_ids ()
 
 let percent_encode value =
   let buffer = Buffer.create (String.length value) in
@@ -545,7 +545,7 @@ let redact_token token message =
     loop 0;
     Buffer.contents buffer
 
-let sync_once_with ~get_json store config =
+let run_sync_with ~get_json store config =
   let run () =
     let* merge_requests = list_merge_requests get_json config in
     let rec process count = function
@@ -560,7 +560,7 @@ let sync_once_with ~get_json store config =
     redact_token config.token error |> bounded_text ~max_bytes:1000
   in
   let record_error error =
-    try Store.record_source_sync_error store source_id error
+    try Source_settings.record_sync_error store source_id error
     with _ -> ()
   in
   let result =
@@ -570,7 +570,7 @@ let sync_once_with ~get_json store config =
   in
   match result with
   | Ok count ->
-      begin match Store.record_source_sync_success store source_id with
+      begin match Source_settings.record_sync_success store source_id with
       | () -> Ok count
       | exception exn ->
           let error =
@@ -584,4 +584,62 @@ let sync_once_with ~get_json store config =
       record_error error;
       Error error
 
-let sync_once store config = sync_once_with ~get_json:curl_get_json store config
+let policy_error store error =
+  let error = Source_settings.error_to_string error in
+  Source_settings.record_sync_error store source_id error;
+  Error error
+
+let gitlab_read_policy store =
+  match Source_settings.get_source store source_id with
+  | None ->
+      Error
+        (Source_settings.error_to_string
+           (Source_settings.Source_not_found source_id))
+  | Some source when not source.enabled -> Error "GitLab source is disabled"
+  | Some source when not source.read_enabled ->
+      Error "GitLab source read is disabled"
+  | Some _ ->
+      begin match Source_settings.gitlab_policy store with
+      | Error error -> policy_error store error
+      | Ok policy -> Ok policy
+      end
+
+let legacy_projects_error =
+  "PHAROS_GITLAB_PROJECTS is no longer supported; configure GitLab scope_json"
+
+let reject_legacy_projects ~getenv store =
+  match getenv "PHAROS_GITLAB_PROJECTS" with
+  | None -> Ok ()
+  | Some _ ->
+      Source_settings.record_sync_error store source_id legacy_projects_error;
+      Error legacy_projects_error
+
+let sync_once_with ?(getenv=(fun _ -> None)) ~get_json store config =
+  match gitlab_read_policy store with
+  | Error error -> Error error
+  | Ok policy ->
+      let* () = reject_legacy_projects ~getenv store in
+      if policy.project_ids <> config.project_ids then
+        let error = "GitLab config does not match persisted source scope" in
+        Source_settings.record_sync_error store source_id error;
+        Error error
+      else
+        run_sync_with ~get_json store config
+
+let sync_from_settings_with ~getenv ~get_json store =
+  match gitlab_read_policy store with
+  | Error error -> Error error
+  | Ok policy ->
+      begin
+        match config_from_env_with ~getenv ~project_ids:policy.project_ids () with
+        | Error error ->
+            Source_settings.record_sync_error store source_id error;
+            Error error
+        | Ok config -> sync_once_with ~get_json store config
+      end
+
+let sync_from_settings store =
+  sync_from_settings_with ~getenv:Sys.getenv_opt ~get_json:curl_get_json store
+
+let sync_once store config =
+  sync_once_with ~getenv:Sys.getenv_opt ~get_json:curl_get_json store config

@@ -37,12 +37,25 @@ docs/ADAPTER_PROTOCOL.md
 7. Ensure adapter errors do not crash daemon.
 8. Ensure no write API is called.
 
+## Task 10a2 hardening
+
+1. Remove project scope ownership from environment config.
+2. Use persisted, validated `scope_json.projects` from `Source_settings` as the
+   only watched-project input; `{}` still runs global `reviews_for_me`.
+3. Reject `PHAROS_GITLAB_PROJECTS` whenever present.
+4. Gate production sync on `enabled && read_enabled` before transport and verify
+   explicit adapter config matches persisted project IDs.
+5. Disabled/read-disabled leaves sync status unchanged. Invalid persisted scope,
+   legacy env, and config/upstream failures record bounded sanitized errors.
+6. Test every gate with an injected fake client; no test calls real GitLab.
+
 ## Do not change
 
 1. Do not post comments.
 2. Do not approve, merge, or modify MRs.
 3. Do not store GitLab token in SQLite.
 4. Do not call real GitLab in tests.
+5. Do not interpret watched projects as a read/write authorization allowlist.
 
 ## Commands
 

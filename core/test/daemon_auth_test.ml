@@ -264,6 +264,62 @@ let test_stale_review_routes_return_conflict () =
           failf "stale %s changed SQLite" suffix)
       mutations)
 
+let test_source_scope_api_validation_and_repair () =
+  with_store (fun store ->
+    let handler = App.routes store capability_token in
+    let before = Store.get_source store "src_gitlab" in
+    let response =
+      call handler ~authorization ~method_:`PATCH
+        ~target:"/v0/sources/src_gitlab"
+        {|{"enabled":true,"scope_json":"{\"projects\":[0]}"}|}
+    in
+    let status = Dream.status response |> Dream.status_to_int in
+    if status <> 400 then failf "invalid source scope returned %d" status;
+    let body = Lwt_main.run (Dream.body response) in
+    if body <> {|{"error":"invalid_source_scope"}|} then
+      failf "invalid source scope returned %s" body;
+    if before <> Store.get_source store "src_gitlab" then
+      failf "invalid source scope PATCH changed SQLite";
+
+    ignore
+      (Store.patch_source store "src_gitlab"
+         Domain.{
+           enabled = None;
+           read_enabled = None;
+           write_enabled = None;
+           scope_json = Some "invalid persisted scope";
+         });
+    let get_response =
+      call handler ~authorization ~method_:`GET ~target:"/v0/sources" ""
+    in
+    if Dream.status get_response |> Dream.status_to_int <> 200 then
+      failf "GET sources rejected repairable persisted scope";
+    let get_json =
+      Lwt_main.run (Dream.body get_response) |> Yojson.Safe.from_string
+    in
+    let gitlab =
+      Yojson.Safe.Util.member "sources" get_json
+      |> Yojson.Safe.Util.to_list
+      |> List.find (fun source ->
+        Yojson.Safe.Util.member "id" source |> Yojson.Safe.Util.to_string
+        = "src_gitlab")
+    in
+    let scope =
+      Yojson.Safe.Util.member "scope_json" gitlab |> Yojson.Safe.Util.to_string
+    in
+    if scope <> "invalid persisted scope" then
+      failf "GET sources hid invalid persisted scope";
+
+    let repair_response =
+      call handler ~authorization ~method_:`PATCH
+        ~target:"/v0/sources/src_gitlab" {|{"scope_json":"{}"}|}
+    in
+    if Dream.status repair_response |> Dream.status_to_int <> 200 then
+      failf "valid source scope repair failed";
+    match Store.get_source store "src_gitlab" with
+    | Some { scope_json = "{}"; _ } -> ()
+    | _ -> failf "valid source scope repair did not persist")
+
 let test_capability_primitives () =
   if not (Capability.is_loopback_host "127.0.0.1") then
     failf "IPv4 loopback rejected";
@@ -318,4 +374,5 @@ let () =
   test_all_v0_routes_require_capability ();
   test_health_is_public ();
   test_valid_capability_reaches_v0_routes ();
-  test_stale_review_routes_return_conflict ()
+  test_stale_review_routes_return_conflict ();
+  test_source_scope_api_validation_and_repair ()

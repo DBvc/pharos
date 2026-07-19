@@ -62,19 +62,12 @@ let () =
       end
   | [ "sync-gitlab" ] ->
       with_store (fun store ->
-        match Gitlab_read.config_from_env () with
+        match Gitlab_read.sync_from_settings store with
+        | Ok processed ->
+            print_json (`Assoc [ ("processed", `Int processed) ])
         | Error error ->
-            Store.record_source_sync_error store Gitlab_read.source_id error;
             prerr_endline error;
-            exit 1
-        | Ok config ->
-            begin match Gitlab_read.sync_once store config with
-            | Ok processed ->
-                print_json (`Assoc [ ("processed", `Int processed) ])
-            | Error error ->
-                prerr_endline error;
-                exit 1
-            end)
+            exit 1)
   | [ "today" ] ->
       with_store (fun store -> print_json (Domain.today_decision_snapshot_to_yojson (Runner.today store)))
   | [ "today-internal" ] ->

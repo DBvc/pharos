@@ -1,6 +1,7 @@
 # Source Settings Contract
 
-Apply in task 07.
+Apply the persistence shell in Task 07 and the ownership/policy hardening in
+Task 10a2.
 
 ## Goal
 
@@ -57,6 +58,38 @@ last_sync_at = null
 last_error = null
 ```
 
+## Task 10a2 ownership and scope rules
+
+`Source_settings` is the single Core owner for source scope validation,
+canonicalization, production config mutation, and effective policy composition.
+`Store` remains a low-level persistence API and may be called directly only by
+near-source persistence tests.
+
+GitLab `scope_json` accepts exactly:
+
+```json
+{}
+{"projects":[42,77]}
+```
+
+Project IDs must be positive JSON integers. Writes sort and deduplicate IDs;
+`{"projects":[]}` canonicalizes to `{}`. Unknown fields, strings, zero, negative
+numbers, duplicate keys, invalid JSON, and non-object values are rejected. Other
+source kinds currently accept only `{}`.
+
+The `projects` list is an additional watched-project scan set, not a read or
+write target allowlist. `{}` preserves the global GitLab `reviews_for_me` query
+and adds no project queries. Operational gates are:
+
+```text
+effective_read = enabled && read_enabled
+effective_write = enabled && write_enabled
+```
+
+Credentials, GitLab base URL, and username remain environment-owned. Project
+scope has no environment fallback; `PHAROS_GITLAB_PROJECTS` is an explicit
+configuration error whenever it is present.
+
 ## API
 
 ```text
@@ -96,7 +129,12 @@ PATCH /v0/sources/:id
 }
 ```
 
-All fields optional. Null means leave unchanged except `last_error` may be set null by a future route.
+All fields are optional. Null or omission means leave unchanged. When
+`scope_json` is supplied, Core validates and canonicalizes it before the low-level
+Store write. Invalid scope returns HTTP 400 `invalid_source_scope` and leaves the
+row unchanged. Omitting scope does not rewrite an invalid legacy value. GET keeps
+that raw value visible so the caller can repair it, while external read/write
+policy fails closed.
 
 ## Swift UI
 
@@ -125,6 +163,10 @@ OCaml tests:
 1. Default rows are created on empty DB.
 2. Write permission defaults to false.
 3. Updating `enabled` persists across reopen.
+4. Scope parsing rejects every non-contract shape and canonicalizes project IDs.
+5. Invalid PATCH leaves SQLite unchanged; invalid persisted scope remains visible
+   and can be repaired.
+6. Disabled/read-disabled/invalid policy paths reach no external client.
 
 ## Acceptance
 

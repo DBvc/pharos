@@ -86,8 +86,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SourceResponse'
+        '400':
+          description: Invalid request field or invalid_source_scope; the source row is unchanged.
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Source not found.
   /v0/today:
     get:
       operationId: today
@@ -363,6 +367,7 @@ components:
           type: boolean
         scope_json:
           type: string
+          description: Persisted operational scope. GitLab accepts only {} or a projects array of positive integer IDs; other source kinds accept only {}.
         last_sync_at:
           type:
             - string
@@ -402,6 +407,7 @@ components:
           type: boolean
         scope_json:
           type: string
+          description: Optional replacement scope. Omission preserves the stored value; valid input is canonicalized and invalid input returns invalid_source_scope without a write.
     WorkRequest:
       type: object
       required:

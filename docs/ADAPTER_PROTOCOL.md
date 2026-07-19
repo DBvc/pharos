@@ -115,12 +115,14 @@ replay. The adapter attaches bounded `gitlab.mr.metadata`,
 `gitlab.mr.pipeline` when known, and `gitlab.mr.discussions` evidence. Every
 evidence body is limited to 4000 bytes.
 
-Credentials come only from `PHAROS_GITLAB_TOKEN`. The OCaml client removes the
-token variable from curl's child environment and passes the private-token header
-over stdin, so the token does not appear in child process arguments, logs,
-source signals, evidence, or SQLite. The adapter follows no redirects and
-exposes no write operation. No daemon sync route is exposed until the local API
-has a capability-token transport.
+Base URL, credentials, and username come from environment; watched project IDs
+come only from the persisted, validated `src_gitlab.scope_json`. `{}` keeps the
+global `reviews_for_me` query, and configured projects only add scans. They are
+not a write allowlist. `PHAROS_GITLAB_PROJECTS` is rejected when present. The
+OCaml client removes the token variable from curl's child environment and passes
+the private-token header over stdin, so the token does not appear in child
+process arguments, logs, source signals, evidence, or SQLite. The adapter follows
+no redirects and exposes no write operation. No daemon sync route is exposed.
 
 ## Language choice
 

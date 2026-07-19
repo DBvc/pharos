@@ -47,8 +47,9 @@ Task 10a does not add a GitLab write client, delivery route, or delivery state.
 ## Task 10b: durable controlled delivery
 
 Task 09 must already provide a current action with canonical target provenance,
-and Task 10a must already enforce caller authentication and revision-bound
-review.
+Task 10a must already enforce caller authentication and revision-bound review,
+and Task 10a2 must make persisted source settings the single operational policy
+owner.
 
 External writeback flows through this shape:
 
@@ -90,13 +91,19 @@ Before any client call, core re-reads and verifies:
 3. Risk is executable in v0.3; L4/L5 always fail closed.
 4. Latest approval exists and matches the current payload hash.
 5. Target kind is `gitlab.mr.comment` or `gitlab.issue.comment`.
-6. GitLab source `write_enabled` is true.
+6. GitLab source policy is valid and
+   `effective_write = enabled && write_enabled` is true.
 7. Body is nonblank and at most 8000 characters.
 8. Target provenance matches the request's stable GitLab source object.
 
 MR targets use `project_id=<id>;mr_iid=<iid>` and issue targets use
 `project_id=<id>;issue_iid=<iid>`. Missing, malformed, or mismatched provenance
 must fail before the fake or real client is called.
+
+`scope_json.projects` is an additional read-time watched-project set, not write
+authorization. Preflight must not use project membership as a target gate; it
+uses stable request/source provenance instead. Invalid persisted scope fails
+closed before the client.
 
 ### Delivery classification
 

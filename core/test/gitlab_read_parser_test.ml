@@ -46,6 +46,11 @@ let result_or_fail label = function
   | Ok value -> value
   | Error error -> failf "%s: %s" label error
 
+let source_result_or_fail label = function
+  | Ok value -> value
+  | Error error ->
+      failf "%s: %s" label (Source_settings.error_to_string error)
+
 let first label = function
   | value :: _ -> value
   | [] -> failf "%s: expected at least one item" label
@@ -79,6 +84,15 @@ let with_store f =
       Store.close store;
       if Sys.file_exists path then Sys.remove path)
     (fun () -> f store)
+
+let source_patch ?enabled ?read_enabled ?write_enabled ?scope_json () =
+  Domain.{ enabled; read_enabled; write_enabled; scope_json }
+
+let enable_gitlab ?(scope_json="{}") store =
+  Source_settings.patch_source store Gitlab_read.source_id
+    (source_patch ~enabled:true ~read_enabled:true ~scope_json ())
+  |> source_result_or_fail "enable GitLab source"
+  |> ignore
 
 let test_parser mr_json discussions_json =
   let merge_requests =
@@ -130,6 +144,7 @@ let test_sync_reuses_merge_identity mr_json discussions_json =
     | unexpected -> Error ("unexpected fixture path: " ^ unexpected)
   in
   with_store (fun store ->
+    enable_gitlab store;
     let first_count =
       Gitlab_read.sync_once_with ~get_json store fixture_config
       |> result_or_fail "first fake sync"
@@ -204,6 +219,7 @@ let test_pipeline_failure_is_optional mr_json discussions_json =
     | unexpected -> Error ("unexpected fixture path: " ^ unexpected)
   in
   with_store (fun store ->
+    enable_gitlab store;
     let first_processed =
       Gitlab_read.sync_once_with ~get_json store fixture_config
       |> result_or_fail "sync with pipeline evidence"
@@ -272,6 +288,143 @@ let test_curl_environment_removes_token () =
     [ "PATH=/usr/bin"; "HTTPS_PROXY=http://127.0.0.1:8080";
       "PHAROS_GITLAB_BASE_URL=https://gitlab.example.com" ]
 
+let getenv_from values name = List.assoc_opt name values
+
+let valid_environment =
+  [
+    ("PHAROS_GITLAB_BASE_URL", "https://gitlab.example.com");
+    ("PHAROS_GITLAB_TOKEN", "fixture-token");
+    ("PHAROS_GITLAB_USERNAME", "dbvc");
+  ]
+
+let expect_error label = function
+  | Error _ -> ()
+  | Ok _ -> failf "%s: expected error" label
+
+let source_status store =
+  match Source_settings.get_source store Gitlab_read.source_id with
+  | Some source -> (source.last_sync_at, source.last_error, source.updated_at)
+  | None -> failf "GitLab source config missing"
+
+let test_source_policy_gates_network () =
+  with_store (fun store ->
+    let calls = ref 0 in
+    let get_json _config _path =
+      incr calls;
+      Error "network must not be called"
+    in
+    let sync getenv =
+      Gitlab_read.sync_from_settings_with ~getenv ~get_json store
+    in
+    let valid_getenv = getenv_from valid_environment in
+    ignore
+      (Store.patch_source store Gitlab_read.source_id
+         (source_patch ~scope_json:"invalid persisted scope" ()));
+    let before = source_status store in
+    expect_error "disabled source with invalid scope" (sync valid_getenv);
+    expect_int "disabled invalid-scope network calls" 0 !calls;
+    if before <> source_status store then
+      failf "disabled invalid-scope sync changed source status";
+
+    ignore
+      (Source_settings.patch_source store Gitlab_read.source_id
+         (source_patch ~enabled:true ~read_enabled:false ())
+       |> source_result_or_fail "enable GitLab without read permission");
+    let before = source_status store in
+    expect_error "read-disabled source with invalid scope" (sync valid_getenv);
+    expect_int "read-disabled invalid-scope network calls" 0 !calls;
+    if before <> source_status store then
+      failf "read-disabled invalid-scope sync changed source status";
+
+    ignore
+      (Store.patch_source store Gitlab_read.source_id
+         (source_patch ~read_enabled:true ()));
+    expect_error "invalid persisted scope" (sync valid_getenv);
+    expect_int "invalid scope network calls" 0 !calls;
+    begin match Source_settings.get_source store Gitlab_read.source_id with
+    | Some { last_error = Some error; _ } ->
+        if String.length error > 1000 then failf "last_error was not bounded";
+        if contains error "invalid persisted scope" then
+          failf "last_error leaked raw invalid scope"
+    | _ -> failf "invalid persisted scope did not record last_error"
+    end;
+
+    ignore
+      (Source_settings.patch_source store Gitlab_read.source_id
+         (source_patch ~scope_json:"{}" ())
+       |> source_result_or_fail "repair GitLab scope");
+    let mismatched_config =
+      { fixture_config with project_ids = [ "42" ] }
+    in
+    expect_error "adapter config scope mismatch"
+      (Gitlab_read.sync_once_with ~get_json store mismatched_config);
+    expect_int "mismatched config network calls" 0 !calls;
+    let legacy_getenv name =
+      if name = "PHAROS_GITLAB_PROJECTS" then Some "42"
+      else valid_getenv name
+    in
+    expect_error "legacy project environment" (sync legacy_getenv);
+    expect_int "legacy env network calls" 0 !calls;
+    begin match Source_settings.get_source store Gitlab_read.source_id with
+    | Some { last_error = Some error; _ } ->
+        if not (contains error "PHAROS_GITLAB_PROJECTS") then
+          failf "legacy env error was not explicit"
+    | _ -> failf "legacy env did not record last_error"
+    end)
+
+let test_real_entry_rejects_legacy_projects () =
+  with_store (fun store ->
+    enable_gitlab store;
+    let calls = ref 0 in
+    let get_json _config _path =
+      incr calls;
+      Error "network must not be called"
+    in
+    let legacy_getenv name =
+      if name = "PHAROS_GITLAB_PROJECTS" then Some "42" else None
+    in
+    let last_sync_before, _, _ = source_status store in
+    expect_error "real sync entry legacy project environment"
+      (Gitlab_read.sync_once_with ~getenv:legacy_getenv ~get_json
+         store fixture_config);
+    expect_int "real sync entry legacy env network calls" 0 !calls;
+    begin match Source_settings.get_source store Gitlab_read.source_id with
+    | Some { last_sync_at; last_error = Some error; _ } ->
+        if last_sync_at <> last_sync_before then
+          failf "legacy env rejection changed last_sync_at";
+        if String.length error > 1000 then failf "legacy env error was not bounded";
+        if not (contains error "PHAROS_GITLAB_PROJECTS") then
+          failf "real sync entry legacy env error was not explicit"
+    | _ -> failf "real sync entry legacy env did not record last_error"
+    end)
+
+let test_persisted_projects_drive_endpoints () =
+  let expected =
+    [
+      "/merge_requests?scope=reviews_for_me&state=opened&per_page=100&page=1";
+      "/projects/42/merge_requests?state=opened&per_page=100&page=1";
+      "/projects/77/merge_requests?state=opened&per_page=100&page=1";
+    ]
+  in
+  let run scope_json =
+    with_store (fun store ->
+      enable_gitlab ~scope_json store;
+      let paths = ref [] in
+      let get_json _config path =
+        paths := path :: !paths;
+        Ok (`List [])
+      in
+      ignore
+        (Gitlab_read.sync_from_settings_with
+           ~getenv:(getenv_from valid_environment) ~get_json store
+         |> result_or_fail "settings-owned project list");
+      List.rev !paths)
+  in
+  if run {|{"projects":[77,42]}|} <> expected then
+    failf "persisted scope produced unexpected project endpoints";
+  if run "{}" <> [ List.hd expected ] then
+    failf "empty persisted scope appended project endpoints"
+
 let () =
   Random.self_init ();
   let mr_path, discussions_path = find_fixture_paths () in
@@ -281,4 +434,7 @@ let () =
   test_sync_reuses_merge_identity mr_json discussions_json;
   test_pipeline_failure_is_optional mr_json discussions_json;
   test_merge_request_pagination ();
-  test_curl_environment_removes_token ()
+  test_curl_environment_removes_token ();
+  test_source_policy_gates_network ();
+  test_real_entry_rejects_legacy_projects ();
+  test_persisted_projects_drive_endpoints ()

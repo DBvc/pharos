@@ -6,6 +6,10 @@ Branch: `codex/source-settings-shell`
 
 Add persistent source settings and a Swift Sources shell before real adapters.
 
+Task 10a2 hardening adds a focused Core `Source_settings` owner without changing
+the Task 07 schema or Swift ownership. Production PATCH and effective read/write
+policy composition must go through this module; `Store` remains low-level.
+
 ## Read first
 
 ```text
@@ -44,11 +48,26 @@ protocol/openapi.yaml
 7. Ensure `write_enabled` defaults to false and copy says review is still required.
 8. Add OCaml tests.
 
+## Task 10a2 hardening
+
+1. GitLab scope accepts only `{}` or a positive-integer `projects` array; writes
+   sort/deduplicate IDs and canonicalize an empty list to `{}`.
+2. Other source kinds accept only `{}`.
+3. Invalid scope PATCH returns `invalid_source_scope` with no database write.
+4. Omitted scope preserves stored text, including an invalid legacy value; GET
+   exposes it for repair while effective policy fails closed.
+5. `effective_read = enabled && read_enabled` and
+   `effective_write = enabled && write_enabled` are composed only by
+   `Source_settings`.
+6. `projects` means extra watched-project scans, never write authorization.
+
 ## Do not change
 
 1. Do not implement real remote source calls.
 2. Do not store tokens in SQLite.
 3. Do not allow source settings to bypass Review Gate.
+4. Do not add a source registry, SQLite migration, credential persistence, or
+   Swift policy logic in Task 10a2.
 
 ## Commands
 

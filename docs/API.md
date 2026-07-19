@@ -148,7 +148,15 @@ Response:
 ```
 
 `write_enabled` only records source permission. External writes still require
-the Review Gate and policy checks.
+the Review Gate and policy checks. GitLab `scope_json` accepts only `{}` or
+`{"projects":[<positive integer>,...]}`. Project IDs are sorted and deduplicated
+on write, and an empty project list canonicalizes to `{}`. Other source kinds
+currently accept only `{}`.
+
+An omitted `scope_json` remains byte-for-byte unchanged. Invalid scope returns
+HTTP 400 with `{"error":"invalid_source_scope"}` and does not update the row.
+`GET /v0/sources` still returns an invalid legacy value so the caller can repair
+it; external reads and writes fail closed until it is repaired.
 
 ## GitLab read-only sync CLI
 
@@ -164,12 +172,17 @@ PHAROS_GITLAB_BASE_URL=https://gitlab.example.com
 PHAROS_GITLAB_TOKEN=...
 ```
 
-Optional environment variables:
+Optional environment variable:
 
 ```text
 PHAROS_GITLAB_USERNAME=dbvc
-PHAROS_GITLAB_PROJECTS=42,77
 ```
+
+GitLab must be enabled for reading in the persisted `src_gitlab` row. `{}` keeps
+the global `reviews_for_me` query and adds no project queries. To scan extra
+projects, PATCH `scope_json` with `{"projects":[42,77]}`. This watched-project
+set is not a write authorization allowlist. `PHAROS_GITLAB_PROJECTS` is rejected
+when present; project scope has no environment fallback.
 
 Successful output:
 
@@ -177,10 +190,12 @@ Successful output:
 {"processed":2}
 ```
 
-Missing configuration or an upstream GitLab/parser failure exits non-zero and
-updates `src_gitlab.last_error`. A successful run updates `last_sync_at` and
-clears the prior error. The token is never persisted and the command never calls
-a GitLab write endpoint.
+Disabled or read-disabled sources exit non-zero before transport without changing
+`last_sync_at` or `last_error`. Invalid persisted scope, legacy project env,
+missing credentials, or an upstream GitLab/parser failure exits non-zero and
+updates a bounded `src_gitlab.last_error`. A successful run updates
+`last_sync_at` and clears the prior error. The token is never persisted and the
+command never calls a GitLab write endpoint.
 
 ```bash
 pharos sync-gitlab

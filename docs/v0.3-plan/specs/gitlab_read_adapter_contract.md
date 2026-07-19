@@ -24,10 +24,12 @@ Development environment variables:
 PHAROS_GITLAB_BASE_URL=https://gitlab.example.com
 PHAROS_GITLAB_TOKEN=...
 PHAROS_GITLAB_USERNAME=dbvc
-PHAROS_GITLAB_PROJECTS=42,77
 ```
 
-Do not store token in SQLite. For development, read from environment. Future Swift Keychain work can inject credentials.
+Do not store token in SQLite. For development, read credentials/base URL/username
+from environment. Watched project IDs come only from the persisted GitLab
+`scope_json` owned by `Source_settings`; `PHAROS_GITLAB_PROJECTS` is rejected
+when present.
 
 ## OCaml structure
 
@@ -55,11 +57,16 @@ type config = {
   project_ids : string list;
 }
 
-val config_from_env : unit -> (config, string) result
+val config_from_env : project_ids:string list -> unit -> (config, string) result
 val sync_once : Store.t -> config -> (int, string) result
+val sync_from_settings : Store.t -> (int, string) result
 ```
 
-`sync_once` returns number of source signals processed.
+`sync_from_settings` is the production entry point. It obtains the effective
+policy and canonical project IDs from `Source_settings`, then combines them with
+environment credentials into the explicit adapter config. `sync_once` also
+rechecks `effective_read` and that its config matches the persisted scope before
+transport. Both return the number of source signals processed.
 
 ## Normalized SourceSignal
 
@@ -96,7 +103,10 @@ Add dev-only CLI command:
 pharos sync-gitlab
 ```
 
-This reads env vars and calls `sync_once`.
+This calls `sync_from_settings`. Disabled/read-disabled, invalid persisted scope,
+legacy project env, or config failure exits non-zero before any GitLab request.
+Disabled/read-disabled does not change sync status. Invalid scope/config records
+a bounded, sanitized `last_error` for repair.
 
 Optional daemon route:
 
@@ -132,6 +142,10 @@ Assertions:
 2. URL is preserved.
 3. Evidence bodies are bounded.
 4. Missing optional fields do not crash parser.
+5. `{}` calls only the global `reviews_for_me` endpoint.
+6. Persisted watched projects append only their project endpoints.
+7. Disabled/read-disabled/invalid scope/legacy env all keep client call count at
+   zero, with the specified sync-status behavior.
 
 ## Acceptance
 
