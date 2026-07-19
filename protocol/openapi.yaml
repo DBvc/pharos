@@ -180,6 +180,8 @@ paths:
                   type: string
                 expected_payload_hash:
                   type: string
+                  description: Opaque action revision returned by the API. Current v0.3 actions use sha256 followed by 64 lowercase hexadecimal characters; clients must echo the value without recomputing it.
+                  example: sha256:6f61c67b639f2adab56d4cec560d4a18fbf805531cebdc6fd8f74d0cce6e46f4
       responses:
         '200':
           description: Edited approval created
@@ -267,6 +269,8 @@ components:
       properties:
         expected_payload_hash:
           type: string
+          description: Opaque action revision returned by the API. Current v0.3 actions use sha256 followed by 64 lowercase hexadecimal characters; clients must echo the value without recomputing it.
+          example: sha256:6f61c67b639f2adab56d4cec560d4a18fbf805531cebdc6fd8f74d0cce6e46f4
     AttentionGroup:
       type: string
       enum:

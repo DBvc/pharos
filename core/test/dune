@@ -3,6 +3,10 @@
  (libraries pharos_core yojson))
 
 (test
+ (name payload_hash_test)
+ (libraries pharos_core))
+
+(test
  (name today_decision)
  (libraries pharos_core yojson))
 

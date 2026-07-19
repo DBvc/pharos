@@ -16,6 +16,7 @@ Run these tasks in order. Each task is a vertical slice and must leave the repos
 | 09 | `codex/09_BUILTIN_SKILLS_V0.md` | `codex/builtin-skills-v0` | typed skill outputs for triage/context/drafts/MR review |
 | 10a | `codex/10_CONTROLLED_GITLAB_WRITEBACK.md` | `codex/local-auth-approval-cas` | loopback local API auth + revision-bound review CAS |
 | 10a2 | `codex/07_SOURCE_SETTINGS_SHELL.md` + `codex/08_GITLAB_READ_ONLY_ADAPTER.md` | `codex/source-settings-owner` | persisted source scope owner + effective read/write policy |
+| 10a3 | `codex/10_CONTROLLED_GITLAB_WRITEBACK.md` | `codex/payload-hash-v2` | versioned length-prefixed SHA-256 action identity |
 | 10b | `codex/10_CONTROLLED_GITLAB_WRITEBACK.md` | `codex/durable-gitlab-writeback` | durable, reconcilable approved GitLab comment delivery |
 | 11 | `codex/11_METRICS_DOGFOOD.md` | `codex/metrics-dogfood` | 7-day metrics, export, dogfood readiness |
 
@@ -31,6 +32,10 @@ Run these tasks in order. Each task is a vertical slice and must leave the repos
   rows own scope and operational permissions; `effective_read` and
   `effective_write` are composed in Core, while GitLab environment config owns
   only base URL, token, and username. Watched projects are not a write allowlist.
+- Task 10a3 must complete after Task 10a2 and before Task 10b. Core owns one
+  versioned `sha256:` payload identity for proposal freshness, review CAS,
+  approval verification, durable attempts, and writeback markers. Pre-v2
+  disposable development databases are rebuilt rather than silently migrated.
 - Task 10b is the first task allowed to add a real external write route. It must verify target provenance, persist a durable attempt before the client call, and keep ambiguous outcomes `unknown` until reconciliation or explicit abandon.
 - Task 11 metrics Today group counts are daily snapshot/gauge values, not refresh counters.
 

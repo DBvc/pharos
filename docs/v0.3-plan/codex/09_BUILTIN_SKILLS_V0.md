@@ -45,7 +45,8 @@ docs/v0.3-plan/specs/controlled_writeback_contract.md
 10. Persist each normalized source bundle atomically and run skills after bounded evidence is stored.
 11. Keep one current proposal per active request and implement the exact proposal freshness rule.
 12. Generate canonical GitLab MR target refs from stable source identity.
-13. Add rollback, no-op approval preservation, changed-payload invalidation, rich-evidence,
+13. Use Core payload hash v2 for proposal no-op/freshness identity; skills and adapters do not recompute it.
+14. Add rollback, no-op approval preservation, changed-payload invalidation, rich-evidence,
     and policy-bypass regression tests.
 
 ## Do not change

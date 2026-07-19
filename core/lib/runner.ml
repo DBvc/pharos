@@ -432,8 +432,18 @@ let context_hash (input : Skill.input) =
     ]
     |> Yojson.Safe.to_string
   in
-  payload_hash ~target_kind:"pharos.skill.context"
-    ~target_ref:input.request.id ~risk:L0 ~body
+  let canonical_bytes = Buffer.create (String.length body + 64) in
+  let add_length_prefixed value =
+    let length = Bytes.create 8 in
+    Bytes.set_int64_be length 0 (Int64.of_int (String.length value));
+    Buffer.add_bytes canonical_bytes length;
+    Buffer.add_string canonical_bytes value
+  in
+  Buffer.add_string canonical_bytes "pharos.skill-context.v1\000";
+  add_length_prefixed input.request.id;
+  add_length_prefixed body;
+  "sha256:"
+  ^ Digestif.SHA256.(to_hex (digest_string (Buffer.contents canonical_bytes)))
 
 let persist_skill_action store (request : work_request) kind ~context_hash
     (output : Skill.proposed_output) =

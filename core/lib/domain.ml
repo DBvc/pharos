@@ -321,8 +321,30 @@ let attention_group_of_status = function
   | Done -> Handled
   | Archived -> Noise
 
-let payload_hash ~target_kind ~target_ref ~risk ~body =
-  Digest.to_hex (Digest.string (String.concat "\n" [ target_kind; target_ref; risk_to_string risk; body ]))
+let payload_hash =
+  let add_length_prefixed buffer value =
+    let length = Bytes.create 8 in
+    Bytes.set_int64_be length 0 (Int64.of_int (String.length value));
+    Buffer.add_bytes buffer length;
+    Buffer.add_string buffer value
+  in
+  fun ~target_kind ~target_ref ~risk ~body ->
+    let canonical_bytes = Buffer.create 256 in
+    Buffer.add_string canonical_bytes "pharos.action-payload.v2\000";
+    List.iter (add_length_prefixed canonical_bytes)
+      [ target_kind; target_ref; risk_to_string risk; body ];
+    "sha256:"
+    ^ Digestif.SHA256.(to_hex (digest_string (Buffer.contents canonical_bytes)))
+
+let payload_hash_is_v2 value =
+  let prefix = "sha256:" in
+  let prefix_length = String.length prefix in
+  String.length value = prefix_length + 64
+  && String.starts_with ~prefix value
+  && String.sub value prefix_length 64
+     |> String.for_all (function
+          | '0' .. '9' | 'a' .. 'f' -> true
+          | _ -> false)
 
 let source_signal_to_yojson (s : source_signal) =
   Json_util.assoc [

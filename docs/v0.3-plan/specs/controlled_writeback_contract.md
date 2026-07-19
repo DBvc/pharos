@@ -1,6 +1,7 @@
 # Controlled GitLab Writeback Contract
 
-Apply in Task 10a and Task 10b. Task 10a is a hard prerequisite for Task 10b.
+Apply across Task 10a, Task 10a2, Task 10a3, and Task 10b. All three control
+plane gates are hard prerequisites for Task 10b.
 
 ## Goal
 
@@ -44,12 +45,33 @@ stale response. Direct CLI review commands require the expected hash too.
 
 Task 10a does not add a GitLab write client, delivery route, or delivery state.
 
+## Task 10a3: versioned payload identity
+
+Core owns one payload identity for proposal freshness, review CAS, approval
+verification, durable attempts, and future writeback markers. Canonical bytes
+are the ASCII tag `pharos.action-payload.v2` followed by one NUL byte, then
+these fields in order:
+
+```text
+uint64_be(byte_length(target_kind)) || target_kind
+uint64_be(byte_length(target_ref))  || target_ref
+uint64_be(byte_length(risk))        || canonical risk (l0 through l5)
+uint64_be(byte_length(body))        || body
+```
+
+Lengths count bytes. SHA-256 over those bytes is stored exactly as
+`sha256:<64 lowercase hex>`. API clients treat the value as opaque and echo it
+unchanged. Approval and execution accept only complete v2 hashes; a legacy MD5
+proposal may still be rejected. There is no silent rewrite or SQLite migration
+for unreleased pre-v2 development state; rebuild the disposable dev database.
+
 ## Task 10b: durable controlled delivery
 
 Task 09 must already provide a current action with canonical target provenance,
 Task 10a must already enforce caller authentication and revision-bound review,
 and Task 10a2 must make persisted source settings the single operational policy
-owner.
+owner. Task 10a3 must already provide the v2 payload identity used by approval,
+attempt, and marker records.
 
 External writeback flows through this shape:
 
@@ -89,7 +111,8 @@ Before any client call, core re-reads and verifies:
 1. Current action and request exist.
 2. Action is approved, not rejected or already executed.
 3. Risk is executable in v0.3; L4/L5 always fail closed.
-4. Latest approval exists and matches the current payload hash.
+4. Action and latest approval carry complete v2 `sha256:` hashes, and the
+   approval matches the current payload hash.
 5. Target kind is `gitlab.mr.comment` or `gitlab.issue.comment`.
 6. GitLab source policy is valid and
    `effective_write = enabled && write_enabled` is true.
@@ -118,10 +141,10 @@ timeline, or evidence.
 
 ### Marker reconciliation and abandon
 
-The stable marker binds attempt id and payload hash. Reconciliation uses the
-official GitLab MR/Issue Notes list or retrieve API with bounded pagination and
-exact marker matching. A match confirms the attempt; no match leaves it
-`unknown` and never proves non-delivery.
+The stable marker binds attempt id and the complete v2 payload hash.
+Reconciliation uses the official GitLab MR/Issue Notes list or retrieve API
+with bounded pagination and exact marker matching. A match confirms the
+attempt; no match leaves it `unknown` and never proves non-delivery.
 
 Only an explicit capability-authenticated abandon of an `unknown` attempt may
 set it to `abandoned`, write an audit timeline event, return the action to
@@ -135,6 +158,10 @@ loopback and token-format validation, H1-to-H2 stale approve/edit/reject with no
 decision side effect, status CAS, and transaction rollback. Swift build plus
 code review proves every request carries the capability and missing config
 fails before URLSession transport.
+
+Task 10a3 tests a stable golden vector, ambiguous old delimiter boundaries,
+no-op stability, every identity field, legacy approval/execution rejection,
+and denial of a legacy approval against a v2 action.
 
 Task 10b uses a fake GitLab client. All policy negatives keep client call count
 at zero. It also covers edited content, confirmed writeback evidence/timeline,

@@ -296,6 +296,19 @@ refresh the request detail and ask the user to review again.
 `expected_payload_hash` is an opaque revision value returned by the API. Clients
 must echo the displayed value and must not infer or recompute its algorithm.
 
+New v0.3 actions expose `payload_hash` as `sha256:` followed by exactly 64
+lowercase hexadecimal characters. Core derives it from the fixed ASCII version
+tag `pharos.action-payload.v2` plus a NUL byte, followed in order by
+`target_kind`, `target_ref`, canonical risk (`l0` through `l5`), and `body`.
+Each field is encoded as an unsigned 8-byte big-endian byte length followed by
+its raw bytes. Approval and execution fail closed for legacy 32-character MD5
+action hashes; rejection may still be used to dispose of a legacy proposal.
+
+There is no schema or data migration for pre-v2 development databases in this
+unreleased version. Stop the daemon and rebuild disposable dev state with
+`rm -f var/pharos.dev.sqlite`. Do not reset a database whose data must be
+preserved; that requires a separately planned migration.
+
 ## POST /v0/actions/:id/execute-local
 
 Executes a local Pharos action after policy verification. External writeback routes will be added in Milestone 3.

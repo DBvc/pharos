@@ -19,13 +19,20 @@ Pharos is local-first and default-read-only. The starter intentionally begins wi
 
 ## Approval hash
 
-Payload hash should be computed from:
+Payload hash v2 is computed as:
 
 ```text
-target_kind + target_ref + risk + body
+"pharos.action-payload.v2\0"
+  || uint64_be(byte_length(target_kind)) || target_kind
+  || uint64_be(byte_length(target_ref))  || target_ref
+  || uint64_be(byte_length(risk))        || canonical risk
+  || uint64_be(byte_length(body))        || body
 ```
 
-When the user edits a draft, the core updates the action body and hash, then creates an approval bound to the new hash. Execution re-checks the current action hash against the approval hash.
+Core returns `sha256:<64 lowercase hex>`. Lengths are byte counts, not character
+counts. When the user edits a draft, the core updates the action body and hash,
+then creates an approval bound to the new hash. Execution re-checks the current
+action hash against the approval hash and rejects legacy MD5 identities.
 
 ## Secret handling
 

@@ -25,6 +25,30 @@ let expect_risk_error label expected = function
   | Error err -> failf "%s: unexpected error %s" label (Policy.error_to_string err)
   | Ok _ -> failf "%s: expected risk block" label
 
+let expect_unsupported_hash label ~action_id ~payload_hash = function
+  | Error
+      (Policy.UnsupportedPayloadHash
+        { action_id = actual_action_id; payload_hash = actual_payload_hash }) ->
+      expect_string (label ^ " action id") action_id actual_action_id;
+      expect_string (label ^ " payload hash") payload_hash actual_payload_hash
+  | Error err -> failf "%s: unexpected error %s" label (Policy.error_to_string err)
+  | Ok _ -> failf "%s: legacy payload hash unexpectedly passed policy" label
+
+let expect_payload_hash_mismatch label ~action_id ~stored_hash = function
+  | Error
+      (Policy.PayloadHashMismatch
+        {
+          action_id = actual_action_id;
+          stored_hash = actual_stored_hash;
+          computed_hash;
+        }) ->
+      expect_string (label ^ " action id") action_id actual_action_id;
+      expect_string (label ^ " stored hash") stored_hash actual_stored_hash;
+      if computed_hash = stored_hash then
+        failf "%s: computed hash unexpectedly matched stored hash" label
+  | Error err -> failf "%s: unexpected error %s" label (Policy.error_to_string err)
+  | Ok _ -> failf "%s: tampered payload unexpectedly passed policy" label
+
 let expect_timeline_kind (detail : request_detail) kind =
   match
     List.find_opt
@@ -199,6 +223,23 @@ let test_hash_mismatch_blocks_execution () =
     | Ok _ -> failf "execution should fail when approval hash is stale"
     end)
 
+let test_action_field_tamper_blocks_execution label mutate =
+  with_store (fun store ->
+    let request = capture store ("Detect " ^ label ^ " tamper") in
+    let action = first_action store request.id in
+    ignore
+      (Result.get_ok
+         (Runner.approve ~expected_payload_hash:action.payload_hash store
+            action.id));
+    let approved_action = reload_action store action.id in
+    Store.update_action_from_skill store (mutate approved_action);
+    let before = review_snapshot store request.id action.id in
+    expect_payload_hash_mismatch label ~action_id:action.id
+      ~stored_hash:approved_action.payload_hash
+      (Runner.execute_local store action.id);
+    if before <> review_snapshot store request.id action.id then
+      failf "%s tamper execution changed persisted state" label)
+
 let test_proposed_action_cannot_reuse_matching_historical_approval () =
   with_store (fun store ->
     let request = capture store "Do not revive a stale approval" in
@@ -241,6 +282,98 @@ let test_rejection_blocks_execution () =
     end;
     let request_after = reload_request store request.id in
     expect_status "rejected request status" Archived request_after.status)
+
+let legacy_md5 = "0123456789abcdef0123456789abcdef"
+
+let set_action_hash store (action : proposed_action) ~payload_hash ~status =
+  Store.update_action_body_status_hash store ~action_id:action.id
+    ~body:action.body ~payload_hash ~status
+
+let test_legacy_hash_cannot_be_approved () =
+  with_store (fun store ->
+    let request = capture store "Legacy hash approval must fail closed" in
+    let action = first_action store request.id in
+    set_action_hash store action ~payload_hash:legacy_md5 ~status:ActionProposed;
+    let before = review_snapshot store request.id action.id in
+    expect_unsupported_hash "legacy approve" ~action_id:action.id
+      ~payload_hash:legacy_md5
+      (Runner.approve ~expected_payload_hash:legacy_md5 store action.id);
+    if before <> review_snapshot store request.id action.id then
+      failf "legacy approve changed persisted state")
+
+let test_legacy_hash_cannot_execute_without_approval () =
+  with_store (fun store ->
+    let request = insert_test_request store ~status:ReadyForReview ~risk:L1 in
+    let action =
+      insert_test_action store ~request_id:request.id ~risk:L1
+        ~target_kind:"pharos.local.complete_request" ~requires_approval:false
+    in
+    set_action_hash store action ~payload_hash:legacy_md5 ~status:ActionProposed;
+    let before = review_snapshot store request.id action.id in
+    expect_unsupported_hash "legacy execute" ~action_id:action.id
+      ~payload_hash:legacy_md5 (Runner.execute_local store action.id);
+    if before <> review_snapshot store request.id action.id then
+      failf "legacy execute changed persisted state")
+
+let test_legacy_approval_cannot_authorize_v2_action () =
+  with_store (fun store ->
+    let request = insert_test_request store ~status:Approved ~risk:L3 in
+    let action =
+      insert_test_action store ~request_id:request.id ~risk:L3
+        ~target_kind:"pharos.local.complete_request" ~requires_approval:true
+    in
+    set_action_hash store action ~payload_hash:action.payload_hash
+      ~status:ActionApproved;
+    Store.insert_approval store
+      {
+        id = Ids.create "appr";
+        action_id = action.id;
+        action_hash = legacy_md5;
+        decision = ApprovedDecision;
+        approved_body = Some action.body;
+        created_at = Time.now_iso ();
+      };
+    let before = review_snapshot store request.id action.id in
+    begin match Runner.execute_local store action.id with
+    | Error (Policy.ApprovalHashMismatch { action_hash; approval_hash }) ->
+        expect_string "v2 action hash" action.payload_hash action_hash;
+        expect_string "legacy approval hash" legacy_md5 approval_hash
+    | Error err -> failf "unexpected error: %s" (Policy.error_to_string err)
+    | Ok _ -> failf "legacy approval authorized a v2 action"
+    end;
+    if before <> review_snapshot store request.id action.id then
+      failf "legacy approval execution changed persisted state")
+
+let test_legacy_hash_can_be_rejected () =
+  with_store (fun store ->
+    let request = capture store "Legacy hash may still be rejected" in
+    let action = first_action store request.id in
+    set_action_hash store action ~payload_hash:legacy_md5 ~status:ActionProposed;
+    ignore
+      (Result.get_ok
+         (Runner.reject ~expected_payload_hash:legacy_md5 store action.id));
+    let persisted = reload_action store action.id in
+    if persisted.status <> ActionRejected then
+      failf "legacy reject did not reject the action")
+
+let test_legacy_external_hash_is_blocked_and_logged () =
+  with_store (fun store ->
+    let request = insert_test_request store ~status:ReadyForReview ~risk:L3 in
+    let action =
+      insert_test_action store ~request_id:request.id ~risk:L3
+        ~target_kind:"gitlab.mr.comment" ~requires_approval:true
+    in
+    set_action_hash store action ~payload_hash:legacy_md5 ~status:ActionProposed;
+    expect_unsupported_hash "legacy external execute" ~action_id:action.id
+      ~payload_hash:legacy_md5 (Runner.execute_local store action.id);
+    let detail = Option.get (Runner.get_detail store request.id) in
+    ignore (expect_timeline_kind detail "policy_block");
+    match metric_today store with
+    | Some metric when metric.unapproved_external_write_attempts = 1 -> ()
+    | Some metric ->
+        failf "expected 1 legacy external block, got %d"
+          metric.unapproved_external_write_attempts
+    | None -> failf "missing legacy external block metric")
 
 let test_high_risk_actions_block risk =
   with_store (fun store ->
@@ -343,8 +476,22 @@ let () =
   test_execution_requires_approval ();
   test_edit_and_approve_updates_hash ();
   test_hash_mismatch_blocks_execution ();
+  test_action_field_tamper_blocks_execution "body"
+    (fun action -> { action with body = action.body ^ " tampered" });
+  test_action_field_tamper_blocks_execution "target kind"
+    (fun action -> { action with target_kind = "pharos.local.other" });
+  test_action_field_tamper_blocks_execution "target ref"
+    (fun action -> { action with target_ref = action.target_ref ^ "-tampered" });
+  test_action_field_tamper_blocks_execution "risk"
+    (fun action ->
+      { action with risk = (if action.risk = L2 then L1 else L2) });
   test_proposed_action_cannot_reuse_matching_historical_approval ();
   test_rejection_blocks_execution ();
+  test_legacy_hash_cannot_be_approved ();
+  test_legacy_hash_cannot_execute_without_approval ();
+  test_legacy_approval_cannot_authorize_v2_action ();
+  test_legacy_hash_can_be_rejected ();
+  test_legacy_external_hash_is_blocked_and_logged ();
   test_high_risk_actions_block L4;
   test_high_risk_actions_block L5;
   test_external_target_blocked_and_logged ();

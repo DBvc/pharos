@@ -54,6 +54,18 @@ eval $(opam env)
 dune build
 ```
 
+This unreleased v0.3 build replaces the old 32-character MD5 action identity
+with payload hash v2. There is no data migration for development databases. If
+`var/pharos.dev.sqlite` was created by a pre-v2 build, stop the daemon and
+rebuild the disposable database before continuing:
+
+```bash
+rm -f ../var/pharos.dev.sqlite
+```
+
+Do not use this reset command for a database that contains data you need to
+preserve; this v0.3 path is only for disposable development state.
+
 Return to the repository root, create an ephemeral capability, and run the
 daemon and Swift app from the same shell environment:
 

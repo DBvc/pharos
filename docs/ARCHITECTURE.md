@@ -227,7 +227,7 @@ POST /v0/metrics/export
 
 ```text
 ProposedAction(body, target, risk)
-  → payload_hash = hash(target + body + risk)
+  → payload_hash = SHA-256(versioned, length-prefixed target + risk + body)
   → Review Gate displays body, target, evidence
   → user approves or edits
   → approval(action_id, action_hash, approved_body)

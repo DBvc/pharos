@@ -1,6 +1,7 @@
 # Task 10: Authenticated and durable GitLab writeback
 
-Task 10 is executed as two review-gated slices. Do not combine them.
+Task 10 is executed through review-gated control-plane prerequisites followed
+by the delivery slice. Do not combine payload identity or delivery work.
 
 ## Read first
 
@@ -49,6 +50,40 @@ Tests must prove loopback/config validation, public health, every `/v0` route's
 Do not add `execute-approved`, a GitLab write client, writeback-attempt schema,
 or delivery/reconciliation code in Task 10a.
 
+## Task 10a3: payload hash v2
+
+### Goal
+
+Replace delimiter-concatenated MD5 action identity with one versioned,
+length-prefixed SHA-256 identity before any durable writeback marker exists.
+
+### Implementation
+
+1. Encode `pharos.action-payload.v2\0`, then byte-length-prefixed
+   `target_kind`, `target_ref`, canonical risk, and body.
+2. Prefix the 64-character lowercase SHA-256 digest with `sha256:`.
+3. Reuse this Core identity for proposal freshness, review CAS, approval
+   verification, and Task 10b attempt/marker binding.
+4. Fail approval and execution closed for legacy MD5 action hashes. Legacy
+   rejection may remain available.
+5. Use `digestif`; do not add custom cryptography or a data migration.
+6. Document the disposable pre-v2 development database rebuild path.
+
+### Acceptance
+
+```bash
+cd core && dune build
+cd core && dune runtest
+```
+
+Tests cover a golden vector, boundary ambiguity, no-op stability, every payload
+field, legacy approve/execute denial, and old approval denial against v2.
+
+### Stop line
+
+Do not add durable attempts, GitLab delivery, reconciliation, or Swift changes
+in Task 10a3.
+
 ## Task 10b: durable GitLab comment delivery
 
 ### Goal
@@ -61,16 +96,16 @@ unknown-result safety, marker reconciliation, and explicit abandon.
 1. Add typed/persisted `writeback_attempts` states from the contract.
 2. Add policy preflight that re-reads action, latest approval, request, source
    identity, and source settings and validates hash/risk/allowlist/body/target,
-   valid source policy, and `enabled && write_enabled` through Task 10a2's
-   `Source_settings` owner.
+   valid v2 payload hashes, valid source policy, and
+   `enabled && write_enabled` through Task 10a2's `Source_settings` owner.
 3. Atomically create one active prepared attempt before network work.
 4. Run the GitLab client outside SQLite transactions and Dream's event loop.
 5. Classify only pre-spawn certainty as `failed_before_send`; all ambiguous
    post-start outcomes become `unknown`.
 6. Confirm successful delivery with external id/url, timeline, evidence, and
    metric.
-7. Reconcile unknown attempts through exact stable-marker matching with bounded
-   GitLab Notes pagination.
+7. Bind markers to the complete v2 payload hash and reconcile unknown attempts
+   through exact stable-marker matching with bounded GitLab Notes pagination.
 8. Add capability-authenticated explicit abandon; require fresh review and
    approval afterward.
 9. Add Swift attempt state and core execution UI without direct GitLab calls.

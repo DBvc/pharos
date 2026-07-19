@@ -167,6 +167,14 @@ Each active request has at most one current proposal.
 6. Keep old approvals for audit. Their old hash must not authorize the refreshed action.
 7. `Done` and `Archived` requests continue to create a new request on replay.
 
+Generated payload identity uses the Core-owned v2 hash contract: the fixed
+`pharos.action-payload.v2\0` tag followed by 8-byte big-endian byte-length
+prefixed `target_kind`, `target_ref`, canonical risk, and body, then SHA-256.
+The stored value is exactly `sha256:<64 lowercase hex>`. No-op and freshness
+comparisons use this same identity; skills and adapters do not recompute it.
+The material context fingerprint remains a separate identity namespace with
+its own `pharos.skill-context.v1\0` version tag.
+
 For GitLab MR comments, parse a stable source id equivalent to
 `gitlab:project/<project_id>:mr/<iid>` and generate exactly:
 

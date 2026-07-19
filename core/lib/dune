@@ -1,4 +1,4 @@
 (library
  (name pharos_core)
  (public_name pharos.core)
- (libraries yojson sqlite3 unix uuidm))
+ (libraries digestif yojson sqlite3 unix uuidm))
